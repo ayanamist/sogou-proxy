@@ -114,8 +114,8 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
         t = hex(int(time.time()))[2:].rstrip('L').zfill(8)
         self.headers["X-Sogou-Tag"] = calc_sogou_hash(t, self.headers['Host'])
         self.headers["X-Sogou-Timestamp"] = t
-        header_str = str(self.headers).replace("\r\n", "\n").replace("\n", "\r\n")
-        self.remote.sendall(header_str.encode('ascii') + b"\r\n")
+        self.remote.sendall(str(self.headers))
+        self.remote.sendall('\r\n')
         # Send Post data
         if self.command == 'POST':
             self.remote.sendall(self.rfile.read(int(self.headers['Content-Length'])))
@@ -123,20 +123,17 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
         response.begin()
 
         # Reply to the browser
-        status = "HTTP/1.1 " + str(response.status) + " " + response.reason
-        self.wfile.write(status.encode('ascii') + b'\r\n')
-        h_list = []
-        for line in response.msg.headers: # Fixed multiple values of a same name
-            if 'TRANSFER-ENCODING' not in line.upper():
-                h_list.append(line)
-        self.wfile.write("".join(h_list) + b'\r\n')
+        self.wfile.write("HTTP/1.1 %s %s\r\n" % (str(response.status), response.reason))
+        self.wfile.write("".join(response.msg.headers))
+        self.wfile.write('\r\n')
 
         if self.command == "CONNECT" and response.status == 200:
             return self.transfer(self.remote, self.connection)
         else:
             while True:
                 response_data = response.read(BUFFER_SIZE)
-                if not response_data: break
+                if not response_data:
+                    break
                 self.wfile.write(response_data)
 
     do_POST = do_GET = do_CONNECT = sogouProxy
