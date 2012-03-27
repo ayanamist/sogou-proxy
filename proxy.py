@@ -2,6 +2,7 @@
 # -*- coding:utf-8 -*-
 
 import httplib
+import logging
 import os
 import random
 import select
@@ -105,7 +106,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
                     break
                 a.sendall(data)
 
-    def sogouProxy(self):
+    def proxy(self):
         if self.remote is None:
             self.remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.remote.settimeout(REMOTE_TIMEOUT)
@@ -129,7 +130,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
         self.wfile.write("".join(response.msg.headers))
         self.wfile.write('\r\n')
 
-        if self.command == "CONNECT" and response.status == 200:
+        if self.command == "CONNECT" and response.status == httplib.OK:
             return self.transfer(self.remote, self.connection)
         else:
             while True:
@@ -138,7 +139,15 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
                     break
                 self.wfile.write(response_data)
 
-    do_HEAD = do_POST = do_GET = do_CONNECT = sogouProxy
+    def do_proxy(self):
+        try:
+            return self.proxy()
+        except socket.timeout:
+            self.send_error(httplib.GATEWAY_TIMEOUT)
+        except Exception:
+            logging.exception("Exception")
+
+    do_HEAD = do_POST = do_GET = do_CONNECT = do_proxy
 
 
 class ThreadingHTTPServer(SocketServer.ThreadingMixIn, BaseHTTPServer.HTTPServer):
