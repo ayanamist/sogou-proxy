@@ -96,11 +96,13 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
             r, w, e = select.select(fdset, [], [])
             if a in r:
                 data = a.recv(BUFFER_SIZE)
-                if not data: break
+                if not data:
+                    break
                 b.sendall(data)
             if b in r:
                 data = b.recv(BUFFER_SIZE)
-                if not data: break
+                if not data:
+                    break
                 a.sendall(data)
 
     def sogouProxy(self):
