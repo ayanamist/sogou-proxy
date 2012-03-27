@@ -136,7 +136,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
                     break
                 self.wfile.write(response_data)
 
-    do_POST = do_GET = do_CONNECT = sogouProxy
+    do_HEAD = do_POST = do_GET = do_CONNECT = sogouProxy
 
 
 class ThreadingHTTPServer(SocketServer.ThreadingMixIn, BaseHTTPServer.HTTPServer):
