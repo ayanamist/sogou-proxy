@@ -29,8 +29,8 @@ REMOTE_TIMEOUT = 15
 # Minimize Memory Usage
 threading.stack_size(128 * 1024)
 
-def calc_sogou_hash(t, host):
-    s = (t + host + 'SogouExplorerProxy').encode('ascii')
+def calc_sogou_hash(timestamp, host):
+    s = (timestamp + host + 'SogouExplorerProxy').encode('ascii')
     code = len(s)
     dwords = int(len(s) / 4)
     rest = len(s) % 4
@@ -115,14 +115,17 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
         self.remote.sendall(self.requestline.encode('ascii') + b"\r\n")
         # Add Sogou Verification Tags
         self.headers["X-Sogou-Auth"] = X_SOGOU_AUTH
-        t = hex(int(time.time()))[2:].rstrip('L').zfill(8)
-        self.headers["X-Sogou-Tag"] = calc_sogou_hash(t, self.headers['Host'])
-        self.headers["X-Sogou-Timestamp"] = t
+        self.headers["X-Sogou-Timestamp"] = hex(int(time.time()))[2:].rstrip('L').zfill(8)
+        self.headers["X-Sogou-Tag"] = calc_sogou_hash(self.headers["X-Sogou-Timestamp"], self.headers['Host'])
         self.remote.sendall(str(self.headers))
         self.remote.sendall('\r\n')
         # Send Post data
         if self.command == 'POST':
-            self.remote.sendall(self.rfile.read(int(self.headers['Content-Length'])))
+            if 'Content-Length' in self.headers:
+                self.remote.sendall(self.rfile.read(int(self.headers['Content-Length'])))
+            else:
+                self.send_error(httplib.BAD_REQUEST, 'POST method without Content-Length header!')
+                return
         response = httplib.HTTPResponse(self.remote, method=self.command)
         response.begin()
 
