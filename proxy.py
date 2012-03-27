@@ -1,6 +1,7 @@
 #!/usr/bin/python
 # -*- coding:utf-8 -*-
 
+import errno
 import httplib
 import logging
 import os
@@ -144,6 +145,11 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
             return self.proxy()
         except socket.timeout:
             self.send_error(httplib.GATEWAY_TIMEOUT)
+        except socket.error, e:
+            if e.errno == errno.ECONNABORTED:
+                pass
+            else:
+                raise e
         except Exception:
             logging.exception("Exception")
 
