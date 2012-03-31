@@ -82,30 +82,36 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
     def handle(self):
         try:
             BaseHTTPServer.BaseHTTPRequestHandler.handle(self)
-        except socket.error:
-            logging.exception("")
+        except socket.error, e:
+            if e.errno == errno.ECONNABORTED:
+                pass
+            else:
+                logging.exception("")
 
     def finish(self):
         try:
             BaseHTTPServer.BaseHTTPRequestHandler.finish(self)
-        except socket.error:
-            logging.exception("")
+        except socket.error, e:
+            if e.errno == errno.ECONNABORTED:
+                pass
+            else:
+                logging.exception("")
 
     # CONNECT Data Transfer
-    def transfer(self, a, b):
-        fdset = [a, b]
+    def transfer(self, soc_r, soc_w):
+        fdset = [soc_r, soc_w]
         while True:
             r, w, e = select.select(fdset, [], [])
-            if a in r:
-                data = a.recv(BUFFER_SIZE)
+            if soc_r in r:
+                data = soc_r.recv(BUFFER_SIZE)
                 if not data:
                     break
-                b.sendall(data)
-            if b in r:
-                data = b.recv(BUFFER_SIZE)
+                soc_w.sendall(data)
+            if soc_w in r:
+                data = soc_w.recv(BUFFER_SIZE)
                 if not data:
                     break
-                a.sendall(data)
+                soc_r.sendall(data)
 
     def proxy(self):
         if self.remote is None:
