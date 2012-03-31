@@ -83,13 +83,13 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
         try:
             BaseHTTPServer.BaseHTTPRequestHandler.handle(self)
         except socket.error:
-            pass
+            logging.exception("")
 
     def finish(self):
         try:
             BaseHTTPServer.BaseHTTPRequestHandler.finish(self)
         except socket.error:
-            pass
+            logging.exception("")
 
     # CONNECT Data Transfer
     def transfer(self, a, b):
@@ -112,6 +112,8 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
             self.remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.remote.settimeout(None)
             self.remote.connect((Handler.proxy_host, Handler.proxy_port))
+        else:
+            print "Remote exists."
         self.remote.sendall(self.requestline.encode('ascii') + b"\r\n")
         # Add Sogou Verification Tags
         self.headers["X-Sogou-Auth"] = X_SOGOU_AUTH
@@ -152,7 +154,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
             if e.errno == errno.ECONNABORTED:
                 pass
             else:
-                raise e
+                logging.exception("Exception")
         except Exception:
             logging.exception("Exception")
 
