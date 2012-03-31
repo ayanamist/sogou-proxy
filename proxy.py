@@ -23,8 +23,7 @@ SERVER_TYPES = [
     ('ctc', 3),
     ('cnc', 3),
 ]
-BUFFER_SIZE = 8192
-REMOTE_TIMEOUT = 15
+BUFFER_SIZE = 32768
 
 
 # Minimize Memory Usage
@@ -111,7 +110,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
     def proxy(self):
         if self.remote is None:
             self.remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.remote.settimeout(REMOTE_TIMEOUT)
+            self.remote.settimeout(None)
             self.remote.connect((Handler.proxy_host, Handler.proxy_port))
         self.remote.sendall(self.requestline.encode('ascii') + b"\r\n")
         # Add Sogou Verification Tags
