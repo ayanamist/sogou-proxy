@@ -156,7 +156,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
         except Exception:
             logging.exception("Exception")
 
-    do_HEAD = do_POST = do_GET = do_CONNECT = do_proxy
+    do_HEAD = do_POST = do_GET = do_CONNECT = do_PUT = do_DELETE = do_OPTIONS = do_TRACE = do_proxy
 
 
 class ThreadingHTTPServer(SocketServer.ThreadingMixIn, BaseHTTPServer.HTTPServer):
