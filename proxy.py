@@ -127,13 +127,15 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
                 assert ProxyInfo.ip
             except (socket.gaierror, AssertionError):
                 return 'Failed to resolve proxy host!'
-            except socket.error, e:
-                if e.errno == errno.ETIMEDOUT:
-                    return 'Connect to remote server timeout!'
-                else:
-                    logging.exception("")
-                    return str(e)
-        self.remote.connect((ProxyInfo.ip, ProxyInfo.port))
+        try:
+            self.remote.connect((ProxyInfo.ip, ProxyInfo.port))
+        except socket.error, e:
+            if e.errno == errno.ETIMEDOUT:
+                return 'Connect to proxy server timeout!'
+            else:
+                logging.exception("")
+                return str(e)
+
 
     def add_sogou_header(self):
         self.headers["X-Sogou-Auth"] = X_SOGOU_AUTH
