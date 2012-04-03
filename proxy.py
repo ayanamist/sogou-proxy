@@ -10,6 +10,7 @@ import random
 import select
 import socket
 import struct
+import sys
 import threading
 import time
 import BaseHTTPServer
@@ -73,10 +74,14 @@ def calc_sogou_hash(timestamp, host):
     return hex(code)[2:].rstrip('L').zfill(8)
 
 
+class ProxyInfo(object):
+    host = None
+    ip = None
+    port = 80
+
+
 class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
     remote = None
-    proxy_host = None
-    proxy_port = None
 
     # Ignore Connection Failure
     def handle(self):
@@ -114,12 +119,16 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
                 soc_r.sendall(data)
 
     def proxy(self):
-        if self.remote is None:
-            self.remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.remote.settimeout(None)
-            self.remote.connect((Handler.proxy_host, Handler.proxy_port))
-        else:
-            print "Remote exists."
+        self.remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.remote.settimeout(None)
+        if not ProxyInfo.ip:
+            try:
+                ProxyInfo.ip = socket.gethostbyname(ProxyInfo.host)
+            except socket.gaierror:
+                return
+            if not ProxyInfo.ip:
+                return
+        self.remote.connect((ProxyInfo.ip, ProxyInfo.port))
         self.remote.sendall(self.requestline.encode('ascii') + b"\r\n")
         # Add Sogou Verification Tags
         self.headers["X-Sogou-Auth"] = X_SOGOU_AUTH
@@ -172,17 +181,19 @@ class ThreadingHTTPServer(SocketServer.ThreadingMixIn, BaseHTTPServer.HTTPServer
 
 
 def main():
+    logging.basicConfig(level=logging.ERROR, format='%(asctime)-15s %(name)-8s %(levelname)-8s %(message)s',
+        datefmt='%m-%d %H:%M:%S', stream=sys.stderr)
+
     config_file = ConfigParser.RawConfigParser()
     config_file.read(os.path.splitext(__file__)[0] + '.ini')
     listen_ip = config_file.get('listen', 'ip')
     listen_port = config_file.getint('listen', 'port')
     server_type = SERVER_TYPES[config_file.getint('run', 'type')]
-    Handler.proxy_host = 'h%d.%s.bj.ie.sogou.com' % (random.randint(0, server_type[1]), server_type[0])
-    Handler.proxy_port = 80
+    ProxyInfo.host = 'h%d.%s.bj.ie.sogou.com' % (random.randint(0, server_type[1]), server_type[0])
 
     server = ThreadingHTTPServer((listen_ip, listen_port), Handler)
 
-    print 'Sogou Proxy\nRunning on %s\nListening on %s:%d' % (Handler.proxy_host, listen_ip, listen_port)
+    print 'Sogou Proxy\nRunning on %s\nListening on %s:%d' % (ProxyInfo.host, listen_ip, listen_port)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
