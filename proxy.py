@@ -118,38 +118,57 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
                     break
                 soc_r.sendall(data)
 
-    def proxy(self):
+    def remote_connect(self):
         self.remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.remote.settimeout(None)
         if not ProxyInfo.ip:
             try:
                 ProxyInfo.ip = socket.gethostbyname(ProxyInfo.host)
-            except socket.gaierror:
-                return
-            if not ProxyInfo.ip:
-                return
+                assert ProxyInfo.ip
+            except (socket.gaierror, AssertionError):
+                return 'Failed to resolve proxy host!'
+            except socket.error, e:
+                if e.errno == errno.ETIMEDOUT:
+                    return 'Connect to remote server timeout!'
+                else:
+                    logging.exception("")
+                    return str(e)
         self.remote.connect((ProxyInfo.ip, ProxyInfo.port))
-        self.remote.sendall(self.requestline.encode('ascii') + b"\r\n")
-        # Add Sogou Verification Tags
+
+    def add_sogou_header(self):
         self.headers["X-Sogou-Auth"] = X_SOGOU_AUTH
         self.headers["X-Sogou-Timestamp"] = hex(int(time.time()))[2:].rstrip('L').zfill(8)
         self.headers["X-Sogou-Tag"] = calc_sogou_hash(self.headers["X-Sogou-Timestamp"], self.headers['Host'])
+
+    def remote_send_requestline(self):
+        self.remote.sendall(self.requestline.encode('ascii') + b"\r\n")
+
+    def remote_send_headers(self):
         self.remote.sendall(str(self.headers))
         self.remote.sendall('\r\n')
-        # Send Post data
+
+    def remote_send_postdata(self):
         if self.command == 'POST':
-            if 'Content-Length' in self.headers:
-                self.remote.sendall(self.rfile.read(int(self.headers['Content-Length'])))
-            else:
-                self.send_error(httplib.BAD_REQUEST, 'POST method without Content-Length header!')
-                return
+            self.remote.sendall(self.rfile.read(int(self.headers['Content-Length'])))
+
+    def proxy(self):
+        if self.command == 'POST' and 'Content-Length' not in self.headers:
+            error_msg = 'POST method without Content-Length header!'
+        else:
+            error_msg = self.remote_connect()
+        if error_msg:
+            self.send_error(httplib.BAD_REQUEST, error_msg)
+            return
+        self.add_sogou_header()
+        self.remote_send_requestline()
+        self.remote_send_headers()
+        self.remote_send_postdata()
         response = httplib.HTTPResponse(self.remote, method=self.command)
         response.begin()
 
         # Reply to the browser
-        self.wfile.write("HTTP/1.1 %s %s\r\n" % (str(response.status), response.reason))
-        self.wfile.write("".join(response.msg.headers))
-        self.wfile.write('\r\n')
+        self.wfile.write("HTTP/1.1 {0:>s} {1:>s}\r\n{2:>s}\r\n".format(str(response.status),
+            response.reason, "".join(response.msg.headers)))
 
         if self.command == "CONNECT" and response.status == httplib.OK:
             return self.transfer(self.remote, self.connection)
