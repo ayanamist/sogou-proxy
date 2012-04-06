@@ -18,11 +18,11 @@ import ConfigParser
 import SocketServer
 
 
-X_SOGOU_AUTH = '9CD285F1E7ADB0BD403C22AD1D545F40/30/853edc6d49ba4e27'
+X_SOGOU_AUTH = "9CD285F1E7ADB0BD403C22AD1D545F40/30/853edc6d49ba4e27"
 SERVER_TYPES = [
-    ('edu', 5),
-    ('ctc', 3),
-    ('cnc', 3),
+    ("edu", 5),
+    ("ctc", 3),
+    ("cnc", 3),
 ]
 BUFFER_SIZE = 32768
 
@@ -31,11 +31,11 @@ BUFFER_SIZE = 32768
 threading.stack_size(128 * 1024)
 
 def calc_sogou_hash(timestamp, host):
-    s = (timestamp + host + 'SogouExplorerProxy').encode('ascii')
+    s = (timestamp + host + "SogouExplorerProxy").encode("ascii")
     code = len(s)
     dwords = int(len(s) / 4)
     rest = len(s) % 4
-    v = struct.unpack(str(dwords) + 'i' + str(rest) + 's', s)
+    v = struct.unpack("%si%ss" % (str(dwords), str(rest)), s)
     for vv in v:
         if type(vv) is str:
             break
@@ -71,7 +71,7 @@ def calc_sogou_hash(timestamp, host):
     code &= 0xffffffff
     code += code >> 6
     code &= 0xffffffff
-    return hex(code)[2:].rstrip('L').zfill(8)
+    return hex(code)[2:].rstrip("L").zfill(8)
 
 
 class ProxyInfo(object):
@@ -111,12 +111,12 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
                 ProxyInfo.ip = socket.gethostbyname(ProxyInfo.host)
                 assert ProxyInfo.ip
             except (socket.gaierror, AssertionError):
-                return 'Failed to resolve proxy host!'
+                return "Failed to resolve proxy host!"
         try:
             self.remote.connect((ProxyInfo.ip, ProxyInfo.port))
         except socket.error, e:
             if e.errno == errno.ETIMEDOUT:
-                return 'Connect to proxy server timeout!'
+                return "Connect to proxy server timeout!"
             else:
                 logging.exception("")
                 return str(e)
@@ -124,19 +124,19 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
 
     def add_sogou_header(self):
         self.headers["X-Sogou-Auth"] = X_SOGOU_AUTH
-        self.headers["X-Sogou-Timestamp"] = hex(int(time.time()))[2:].rstrip('L').zfill(8)
-        self.headers["X-Sogou-Tag"] = calc_sogou_hash(self.headers["X-Sogou-Timestamp"], self.headers['Host'])
+        self.headers["X-Sogou-Timestamp"] = hex(int(time.time()))[2:].rstrip("L").zfill(8)
+        self.headers["X-Sogou-Tag"] = calc_sogou_hash(self.headers["X-Sogou-Timestamp"], self.headers["Host"])
 
     def remote_send_requestline(self):
-        self.remote.sendall(self.requestline.encode('ascii') + b"\r\n")
+        self.remote.sendall(self.requestline.encode("ascii") + b"\r\n")
 
     def remote_send_headers(self):
         self.remote.sendall(str(self.headers))
-        self.remote.sendall('\r\n')
+        self.remote.sendall("\r\n")
 
     def remote_send_postdata(self):
-        if self.command == 'POST':
-            self.remote.sendall(self.rfile.read(int(self.headers['Content-Length'])))
+        if self.command == "POST":
+            self.remote.sendall(self.rfile.read(int(self.headers["Content-Length"])))
 
     def local_write_connect(self):
         fdset = [self.remote, self.connection]
@@ -150,7 +150,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
                     except socket, e:
                         if e.errno == errno.WSAECONNRESET:
                             self.send_error(httplib.BAD_GATEWAY,
-                                'An existing connection was forcibly closed by the remote host')
+                                "An existing connection was forcibly closed by the remote host")
                         else:
                             logging.exception(str(e))
                     else:
@@ -176,8 +176,8 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
         self.http_response.begin()
 
     def proxy(self):
-        if self.command == 'POST' and 'Content-Length' not in self.headers:
-            self.send_error(httplib.BAD_REQUEST, 'POST method without Content-Length header!')
+        if self.command == "POST" and "Content-Length" not in self.headers:
+            self.send_error(httplib.BAD_REQUEST, "POST method without Content-Length header!")
             return
         else:
             error_msg = self.remote_connect()
@@ -216,23 +216,23 @@ class ThreadingHTTPServer(SocketServer.ThreadingMixIn, BaseHTTPServer.HTTPServer
 
 
 def main():
-    logging.basicConfig(level=logging.ERROR, format='%(asctime)-15s %(name)-8s %(levelname)-8s %(message)s',
-        datefmt='%m-%d %H:%M:%S', stream=sys.stderr)
+    logging.basicConfig(level=logging.ERROR, format="%(asctime)-15s %(name)-8s %(levelname)-8s %(message)s",
+        datefmt="%m-%d %H:%M:%S", stream=sys.stderr)
 
     config_file = ConfigParser.RawConfigParser()
-    config_file.read(os.path.splitext(__file__)[0] + '.ini')
-    listen_ip = config_file.get('listen', 'ip')
-    listen_port = config_file.getint('listen', 'port')
-    server_type = SERVER_TYPES[config_file.getint('run', 'type')]
-    ProxyInfo.host = 'h%d.%s.bj.ie.sogou.com' % (random.randint(0, server_type[1]), server_type[0])
+    config_file.read("%s.ini" % os.path.splitext(__file__)[0])
+    listen_ip = config_file.get("listen", "ip")
+    listen_port = config_file.getint("listen", "port")
+    server_type = SERVER_TYPES[config_file.getint("run", "type")]
+    ProxyInfo.host = "h%d.%s.bj.ie.sogou.com" % (random.randint(0, server_type[1]), server_type[0])
 
     server = ThreadingHTTPServer((listen_ip, listen_port), Handler)
 
-    print 'Sogou Proxy\nRunning on %s\nListening on %s:%d' % (ProxyInfo.host, listen_ip, listen_port)
+    print "Sogou Proxy\nRunning on %s\nListening on %s:%d" % (ProxyInfo.host, listen_ip, listen_port)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         exit()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
