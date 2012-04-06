@@ -105,18 +105,31 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
     # CONNECT Data Transfer
     def transfer(self, soc_r, soc_w):
         fdset = [soc_r, soc_w]
+        data = ''
         while True:
-            r, w, e = select.select(fdset, [], [])
-            if soc_r in r:
-                data = soc_r.recv(BUFFER_SIZE)
-                if not data:
-                    break
-                soc_w.sendall(data)
-            if soc_w in r:
-                data = soc_w.recv(BUFFER_SIZE)
-                if not data:
-                    break
-                soc_r.sendall(data)
+            r, w, _ = select.select(fdset, fdset, [])
+            for soc in fdset:
+                try:
+                    i = r.index(soc)
+                except ValueError:
+                    pass
+                else:
+                    try:
+                        data += soc.recv(BUFFER_SIZE)
+                    except socket, e:
+                        if e.errno == errno.WSAECONNRESET:
+                            self.send_error(httplib.BAD_GATEWAY,
+                                'An existing connection was forcibly closed by the remote host')
+                        else:
+                            logging.exception(str(e))
+                    else:
+                        if not data:
+                            break
+                        the_other_soc = fdset[i ^ 1]
+                        if the_other_soc in w:
+                            the_other_soc.sendall(data)
+                            data = ''
+
 
     def remote_connect(self):
         self.remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
