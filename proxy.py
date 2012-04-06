@@ -140,9 +140,8 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
 
     def local_write_connect(self):
         fdset = [self.remote, self.connection]
-        data = ''
         while True:
-            r, w, _ = select.select(fdset, fdset, [])
+            r, w, _ = select.select(fdset, [], [])
             if r:
                 for soc in fdset:
                     try:
@@ -151,7 +150,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
                         pass
                     else:
                         try:
-                            data += soc.recv(BUFFER_SIZE)
+                            data = soc.recv(BUFFER_SIZE)
                         except socket, e:
                             if e.errno == errno.WSAECONNRESET:
                                 self.send_error(httplib.BAD_GATEWAY,
@@ -162,9 +161,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
                             if not data:
                                 break
                             the_other_soc = fdset[i ^ 1]
-                            if the_other_soc in w:
-                                the_other_soc.sendall(data)
-                                data = ''
+                            the_other_soc.sendall(data)
 
     def local_write_other(self):
         while True:
