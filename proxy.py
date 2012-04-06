@@ -168,12 +168,14 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
 
     def proxy(self):
         if self.command == 'POST' and 'Content-Length' not in self.headers:
-            error_msg = 'POST method without Content-Length header!'
+            self.send_error(httplib.BAD_REQUEST, 'POST method without Content-Length header!')
+            return
         else:
             error_msg = self.remote_connect()
-        if error_msg:
-            self.send_error(httplib.BAD_REQUEST, error_msg)
-            return
+            if error_msg:
+                self.send_error(httplib.BAD_GATEWAY, error_msg)
+                return
+
         self.add_sogou_header()
         self.remote_send_requestline()
         self.remote_send_headers()
