@@ -143,25 +143,21 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
         while True:
             r, w, _ = select.select(fdset, [], [])
             if r:
-                for soc in fdset:
+                for soc in r:
+                    i = fdset.index(soc)
                     try:
-                        i = r.index(soc)
-                    except ValueError:
-                        pass
-                    else:
-                        try:
-                            data = soc.recv(BUFFER_SIZE)
-                        except socket, e:
-                            if e.errno == errno.WSAECONNRESET:
-                                self.send_error(httplib.BAD_GATEWAY,
-                                    'An existing connection was forcibly closed by the remote host')
-                            else:
-                                logging.exception(str(e))
+                        data = soc.recv(BUFFER_SIZE)
+                    except socket, e:
+                        if e.errno == errno.WSAECONNRESET:
+                            self.send_error(httplib.BAD_GATEWAY,
+                                'An existing connection was forcibly closed by the remote host')
                         else:
-                            if not data:
-                                break
-                            the_other_soc = fdset[i ^ 1]
-                            the_other_soc.sendall(data)
+                            logging.exception(str(e))
+                    else:
+                        if not data:
+                            return
+                        the_other_soc = fdset[i ^ 1]
+                        the_other_soc.sendall(data)
 
     def local_write_other(self):
         while True:
