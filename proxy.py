@@ -205,6 +205,11 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
             return self.proxy()
         except socket.timeout:
             self.send_error(httplib.GATEWAY_TIMEOUT)
+        except socket.error, e:
+            if e.errno == errno.WSAECONNABORTED:
+                pass
+            else:
+                logging.exception(str(e))
         except Exception:
             logging.exception("Exception")
 
