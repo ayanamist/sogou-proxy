@@ -166,6 +166,25 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
         if self.command == 'POST':
             self.remote.sendall(self.rfile.read(int(self.headers['Content-Length'])))
 
+    def local_write_connect(self):
+        return self.transfer(self.remote, self.connection)
+
+    def local_write_other(self):
+        while True:
+            response_data = self.http_response.read(BUFFER_SIZE)
+            if not response_data:
+                break
+            self.wfile.write(response_data)
+
+    def local_write_line(self):
+        # Reply to the browser
+        self.wfile.write("HTTP/1.1 {0:>s} {1:>s}\r\n{2:>s}\r\n".format(str(self.http_response.status),
+            self.http_response.reason, "".join(self.http_response.msg.headers)))
+
+    def build_local_response(self):
+        self.http_response = httplib.HTTPResponse(self.remote, method=self.command)
+        self.http_response.begin()
+
     def proxy(self):
         if self.command == 'POST' and 'Content-Length' not in self.headers:
             self.send_error(httplib.BAD_REQUEST, 'POST method without Content-Length header!')
@@ -180,32 +199,22 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
         self.remote_send_requestline()
         self.remote_send_headers()
         self.remote_send_postdata()
-        response = httplib.HTTPResponse(self.remote, method=self.command)
-        response.begin()
-
-        # Reply to the browser
-        self.wfile.write("HTTP/1.1 {0:>s} {1:>s}\r\n{2:>s}\r\n".format(str(response.status),
-            response.reason, "".join(response.msg.headers)))
-
-        if self.command == "CONNECT" and response.status == httplib.OK:
-            return self.transfer(self.remote, self.connection)
+        self.build_local_response()
+        self.local_write_line()
+        if self.command == "CONNECT":
+            if self.http_response.status == httplib.OK:
+                self.local_write_connect()
+            else:
+                self.send_error(httplib.BAD_GATEWAY,
+                    "CONNECT method but response with status code %d" % self.http_response.status)
         else:
-            while True:
-                response_data = response.read(BUFFER_SIZE)
-                if not response_data:
-                    break
-                self.wfile.write(response_data)
+            self.local_write_other()
 
     def do_proxy(self):
         try:
             return self.proxy()
         except socket.timeout:
             self.send_error(httplib.GATEWAY_TIMEOUT)
-        except socket.error, e:
-            if e.errno == errno.ECONNABORTED:
-                pass
-            else:
-                logging.exception("Exception")
         except Exception:
             logging.exception("Exception")
 
