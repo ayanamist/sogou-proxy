@@ -117,6 +117,8 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
         except socket.error, e:
             if e.errno == errno.ETIMEDOUT:
                 return "Connect to proxy server timeout!"
+            elif e.errno == errno.WSAEHOSTUNREACH:
+                return "Attempted to an unreachable host!"
             else:
                 logging.exception("")
                 return str(e)
