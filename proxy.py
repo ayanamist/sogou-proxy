@@ -97,7 +97,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
         try:
             BaseHTTPServer.BaseHTTPRequestHandler.finish(self)
         except socket.error, e:
-            if e.errno == errno.ECONNABORTED:
+            if e.errno in (errno.ECONNABORTED, errno.WSAECONNRESET):
                 pass
             else:
                 logging.exception("")
