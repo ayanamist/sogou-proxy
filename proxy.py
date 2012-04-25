@@ -87,20 +87,14 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
     def handle(self):
         try:
             BaseHTTPServer.BaseHTTPRequestHandler.handle(self)
-        except socket.error, e:
-            if e.errno == errno.ECONNABORTED:
-                pass
-            else:
-                logging.exception("")
+        except socket.error:
+            pass
 
     def finish(self):
         try:
             BaseHTTPServer.BaseHTTPRequestHandler.finish(self)
-        except socket.error, e:
-            if e.errno in (errno.ECONNABORTED, errno.WSAECONNRESET):
-                pass
-            else:
-                logging.exception("")
+        except socket.error:
+            pass
 
     # CONNECT Data Transfer
     def remote_connect(self):
@@ -208,7 +202,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
         except socket.timeout:
             self.send_error(httplib.GATEWAY_TIMEOUT)
         except socket.error, e:
-            if e.errno == errno.WSAECONNABORTED:
+            if e.errno in (errno.WSAECONNABORTED, errno.WSAECONNRESET):
                 pass
             else:
                 logging.exception(str(e))
