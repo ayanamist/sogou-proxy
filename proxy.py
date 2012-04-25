@@ -20,7 +20,7 @@ import SocketServer
 
 X_SOGOU_AUTH = "9CD285F1E7ADB0BD403C22AD1D545F40/30/853edc6d49ba4e27"
 SERVER_TYPES = [
-    ("edu", 5),
+    ("edu", 3),
     ("ctc", 3),
     ("cnc", 3),
 ]
@@ -149,7 +149,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
                     i = fdset.index(soc)
                     try:
                         data = soc.recv(BUFFER_SIZE)
-                    except socket, e:
+                    except socket.error, e:
                         if e.errno == errno.WSAECONNRESET:
                             self.send_error(httplib.BAD_GATEWAY,
                                 "An existing connection was forcibly closed by the remote host")
