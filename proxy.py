@@ -144,7 +144,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
                     try:
                         data = soc.recv(BUFFER_SIZE)
                     except socket.error, e:
-                        if e.errno == errno.WSAECONNRESET:
+                        if e.errno in (errno.WSAECONNRESET, errno.WSAECONNABORTED):
                             self.send_error(httplib.BAD_GATEWAY,
                                 "An existing connection was forcibly closed by the remote host")
                         else:
