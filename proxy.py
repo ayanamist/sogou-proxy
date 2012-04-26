@@ -111,7 +111,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
         except socket.error, e:
             if e.errno == errno.ETIMEDOUT:
                 return "Connect to proxy server timeout!"
-            elif e.errno == errno.WSAEHOSTUNREACH:
+            elif e.errno == errno.EHOSTUNREACH:
                 return "Attempted to an unreachable host!"
             else:
                 logging.exception("")
@@ -144,7 +144,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
                     try:
                         data = soc.recv(BUFFER_SIZE)
                     except socket.error, e:
-                        if e.errno in (errno.WSAECONNRESET, errno.WSAECONNABORTED):
+                        if e.errno in (errno.ECONNRESET, errno.ECONNABORTED):
                             self.send_error(httplib.BAD_GATEWAY,
                                 "An existing connection was forcibly closed by the remote host")
                         else:
@@ -202,7 +202,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
         except socket.timeout:
             self.send_error(httplib.GATEWAY_TIMEOUT)
         except socket.error, e:
-            if e.errno in (errno.WSAECONNABORTED, errno.WSAECONNRESET):
+            if e.errno in (errno.ECONNABORTED, errno.ECONNRESET):
                 pass
             else:
                 logging.exception(str(e))
