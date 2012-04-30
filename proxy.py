@@ -169,7 +169,10 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
 
     def build_local_response(self):
         self.http_response = httplib.HTTPResponse(self.remote, method=self.command)
-        self.http_response.begin()
+        try:
+            self.http_response.begin()
+        except socket.error, e:
+            logging.exception(e.message)
 
     def proxy(self):
         if self.command == "POST" and "Content-Length" not in self.headers:
