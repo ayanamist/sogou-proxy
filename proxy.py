@@ -23,6 +23,7 @@ SERVER_TYPES = [
     ("edu", 3),
     ("ctc", 3),
     ("cnc", 3),
+    ("dxt", 3),
 ]
 BUFFER_SIZE = 32768
 
