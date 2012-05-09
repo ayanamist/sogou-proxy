@@ -184,6 +184,9 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
                 self.send_error(httplib.BAD_GATEWAY, error_msg)
                 return
 
+        if 'Host' not in self.headers:
+            self.send_error(httplib.BAD_REQUEST, "Host field missing in HTTP request headers.")
+            return
         self.add_sogou_header()
         self.remote_send_requestline()
         self.remote_send_headers()
