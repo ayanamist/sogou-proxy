@@ -2,7 +2,6 @@
 # -*- coding:utf-8 -*-
 # modified from http://xiaoxia.org/2011/11/14/update-sogou-proxy-program-with-https-support/
 
-import errno
 import httplib
 import logging
 import os
@@ -110,13 +109,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
         try:
             self.remote.connect((ProxyInfo.ip, ProxyInfo.port))
         except socket.error, e:
-            if e.errno == errno.ETIMEDOUT:
-                return "Connect to proxy server timeout!"
-            elif e.errno == errno.EHOSTUNREACH:
-                return "Attempted to an unreachable host!"
-            else:
-                logging.exception("")
-                return str(e)
+            return "%d: %s" % (e.errno, e.message)
 
 
     def add_sogou_header(self):
@@ -145,11 +138,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
                     try:
                         data = soc.recv(BUFFER_SIZE)
                     except socket.error, e:
-                        if e.errno in (errno.ECONNRESET, errno.ECONNABORTED):
-                            self.send_error(httplib.BAD_GATEWAY,
-                                "An existing connection was forcibly closed by the remote host")
-                        else:
-                            logging.exception(str(e))
+                        self.send_error(httplib.BAD_GATEWAY, "%d: %s" % (e.errno, e.message))
                     else:
                         if not data:
                             return
@@ -209,10 +198,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
         except socket.timeout:
             self.send_error(httplib.GATEWAY_TIMEOUT)
         except socket.error, e:
-            if e.errno in (errno.ECONNABORTED, errno.ECONNRESET):
-                pass
-            else:
-                logging.exception(str(e))
+            pass
         except Exception:
             logging.exception("Exception")
 
