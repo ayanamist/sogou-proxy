@@ -3,7 +3,7 @@
 # modified from http://xiaoxia.org/2011/11/14/update-sogou-proxy-program-with-https-support/
 try:
     import gevent, gevent.monkey
-    gevent.monkey.patch_all(dns=gevent.version_info[0]>=1)
+    gevent.monkey.patch_all()
 except:
     pass
 
