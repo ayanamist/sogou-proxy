@@ -23,6 +23,7 @@ import BaseHTTPServer
 import ConfigParser
 import SocketServer
 
+import socks
 
 X_SOGOU_AUTH = "9CD285F1E7ADB0BD403C22AD1D545F40/30/853edc6d49ba4e27"
 SERVER_TYPES = [
@@ -84,6 +85,7 @@ def calc_sogou_hash(timestamp, host):
 class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
     remote = None
     sogou_host = None
+    proxied = False
 
     # Ignore Connection Failure
     def handle(self):
@@ -100,7 +102,10 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
 
     # CONNECT Data Transfer
     def remote_connect(self):
-        self.remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        if Handler.proxied:
+            self.remote = socks.socksocket()
+        else:
+            self.remote = socket.socket()
         self.remote.settimeout(None)
         try:
             self.remote.connect((Handler.sogou_host, 80))
@@ -215,6 +220,12 @@ def main():
     listen_port = config_file.getint("listen", "port")
     server_type = SERVER_TYPES[config_file.getint("run", "type")]
     Handler.sogou_host = "h%d.%s.bj.ie.sogou.com" % (random.randint(0, server_type[1]), server_type[0])
+    if config_file.getboolean("proxy", "enabled"):
+        proxy_host = config_file.get("proxy", "host")
+        proxy_port = config_file.getint("proxy", "port")
+        proxy_type = getattr(socks, "PROXY_TYPE_" + config_file.get("proxy", "type").upper())
+        socks.setdefaultproxy(proxy_type, proxy_host, proxy_port)
+        Handler.proxied = False
 
     server = ThreadingHTTPServer((listen_ip, listen_port), Handler)
 
