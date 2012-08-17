@@ -91,13 +91,13 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
     def handle(self):
         try:
             BaseHTTPServer.BaseHTTPRequestHandler.handle(self)
-        except socket.error:
+        except (socks.ProxyError, socket.error):
             pass
 
     def finish(self):
         try:
             BaseHTTPServer.BaseHTTPRequestHandler.finish(self)
-        except socket.error:
+        except (socks.ProxyError, socket.error):
             pass
 
     # CONNECT Data Transfer
@@ -109,7 +109,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
         self.remote.settimeout(None)
         try:
             self.remote.connect((Handler.sogou_host, 80))
-        except socket.error, e:
+        except (socks.ProxyError, socket.error), e:
             return "%d: %s" % (e.errno, e.message)
 
 
@@ -138,7 +138,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
                     i = fdset.index(soc)
                     try:
                         data = soc.recv(BUFFER_SIZE)
-                    except socket.error, e:
+                    except (socks.ProxyError, socket.error), e:
                         self.send_error(httplib.BAD_GATEWAY, "%d: %s" % (e.errno, e.message))
                     else:
                         if not data:
@@ -162,7 +162,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
         self.http_response = httplib.HTTPResponse(self.remote, method=self.command)
         try:
             self.http_response.begin()
-        except socket.error, e:
+        except (socks.ProxyError, socket.error), e:
             logging.exception(e.message)
 
     def proxy(self):
@@ -198,7 +198,7 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
             return self.proxy()
         except socket.timeout:
             self.send_error(httplib.GATEWAY_TIMEOUT)
-        except socket.error:
+        except (socks.ProxyError, socket.error):
             pass
         except Exception:
             logging.exception("Exception")

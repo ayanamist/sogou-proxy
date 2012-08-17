@@ -47,7 +47,7 @@ PROXY_TYPE_HTTP = 3
 _defaultproxy = None
 _orgsocket = socket.socket
 
-class ProxyError(socket.error): pass
+class ProxyError(Exception): pass
 
 
 class GeneralProxyError(ProxyError): pass
