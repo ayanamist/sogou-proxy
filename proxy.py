@@ -34,9 +34,10 @@ SERVER_TYPES = [
 ]
 BUFFER_SIZE = 32768
 
-
 # Minimize Memory Usage
 threading.stack_size(128 * 1024)
+sogou_host = None
+use_proxy = False
 
 def calc_sogou_hash(timestamp, host):
     s = (timestamp + host + "SogouExplorerProxy").encode("ascii")
@@ -84,8 +85,6 @@ def calc_sogou_hash(timestamp, host):
 
 class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
     remote = None
-    sogou_host = None
-    proxied = False
 
     # Ignore Connection Failure
     def handle(self):
@@ -102,13 +101,13 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
 
     # CONNECT Data Transfer
     def remote_connect(self):
-        if Handler.proxied:
+        if use_proxy:
             self.remote = socks.socksocket()
         else:
             self.remote = socket.socket()
         self.remote.settimeout(None)
         try:
-            self.remote.connect((Handler.sogou_host, 80))
+            self.remote.connect((sogou_host, 80))
         except (socks.ProxyError, socket.error), e:
             return "%d: %s" % (e.errno, e.message)
 
@@ -219,17 +218,19 @@ def main():
     listen_ip = config_file.get("listen", "ip")
     listen_port = config_file.getint("listen", "port")
     server_type = SERVER_TYPES[config_file.getint("run", "type")]
-    Handler.sogou_host = "h%d.%s.bj.ie.sogou.com" % (random.randint(0, server_type[1]), server_type[0])
+    global sogou_host
+    sogou_host = "h%d.%s.bj.ie.sogou.com" % (random.randint(0, server_type[1]), server_type[0])
     if config_file.getboolean("proxy", "enabled"):
         proxy_host = config_file.get("proxy", "host")
         proxy_port = config_file.getint("proxy", "port")
         proxy_type = getattr(socks, "PROXY_TYPE_" + config_file.get("proxy", "type").upper())
         socks.setdefaultproxy(proxy_type, proxy_host, proxy_port)
-        Handler.proxied = False
+        global use_proxy
+        use_proxy = True
 
     server = ThreadingHTTPServer((listen_ip, listen_port), Handler)
 
-    print "Sogou Proxy\nRunning on %s\nListening on %s:%d" % (Handler.sogou_host, listen_ip, listen_port)
+    print "Sogou Proxy\nRunning on %s\nListening on %s:%d" % (sogou_host, listen_ip, listen_port)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
