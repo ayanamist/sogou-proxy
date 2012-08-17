@@ -47,7 +47,10 @@ PROXY_TYPE_HTTP = 3
 _defaultproxy = None
 _orgsocket = socket.socket
 
-class ProxyError(Exception): pass
+class ProxyError(Exception):
+    def __init__(self, message):
+        super(ProxyError, self).__init__()
+        self.errno, self.message = message
 
 
 class GeneralProxyError(ProxyError): pass
