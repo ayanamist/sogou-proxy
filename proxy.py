@@ -108,9 +108,10 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
         self.remote.settimeout(None)
         try:
             self.remote.connect((sogou_host, 80))
-        except (socks.ProxyError, socket.error), e:
+        except socket.error, e:
             return "%d: %s" % (e.errno, e.message)
-
+        except socks.ProxyError, e:
+            return e.message
 
     def add_sogou_header(self):
         self.headers["X-Sogou-Auth"] = X_SOGOU_AUTH
@@ -137,8 +138,10 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
                     i = fdset.index(soc)
                     try:
                         data = soc.recv(BUFFER_SIZE)
-                    except (socks.ProxyError, socket.error), e:
+                    except socket.error, e:
                         self.send_error(httplib.BAD_GATEWAY, "%d: %s" % (e.errno, e.message))
+                    except socks.ProxyError, e:
+                        self.send_error(httplib.BAD_GATEWAY, e.message)
                     else:
                         if not data:
                             return
