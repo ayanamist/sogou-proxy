@@ -40,33 +40,32 @@ sogou_host = None
 use_proxy = False
 
 def calc_sogou_hash(timestamp, host):
-    s = (timestamp + host + "SogouExplorerProxy").encode("ascii")
-    code = len(s)
-    dwords = int(len(s) / 4)
-    rest = len(s) % 4
-    v = struct.unpack("%si%ss" % (str(dwords), str(rest)), s)
-    for vv in v:
-        if type(vv) is str:
-            break
-        a = (vv & 0xFFFF)
-        b = (vv >> 16)
+    s = "%s%s%s" % (timestamp, host, "SogouExplorerProxy")
+    length = code = len(s)
+    dwords = code // 4
+    rest = code % 4
+    v = struct.unpack("%di%ds" % (dwords, rest), s)
+    for i in xrange(dwords):
+        vv = v[i]
+        a = vv & 0xFFFF
+        b = vv >> 16
         code += a
         code ^= ((code << 5) ^ b) << 0xb
         # To avoid overflows
         code &= 0xffffffff
         code += code >> 0xb
     if rest == 3:
-        code += ord(s[len(s) - 2]) * 256 + ord(s[len(s) - 3])
-        code ^= (code ^ (ord(s[len(s) - 1]) * 4)) << 0x10
+        code += ord(s[length - 2]) * 256 + ord(s[length - 3])
+        code ^= (code ^ (ord(s[length - 1]) * 4)) << 0x10
         code &= 0xffffffff
         code += code >> 0xb
     elif rest == 2:
-        code += ord(s[len(s) - 1]) * 256 + ord(s[len(s) - 2])
+        code += ord(s[length - 1]) * 256 + ord(s[length - 2])
         code ^= code << 0xb
         code &= 0xffffffff
         code += code >> 0x11
     elif rest == 1:
-        code += ord(s[len(s) - 1])
+        code += ord(s[length - 1])
         code ^= code << 0xa
         code &= 0xffffffff
         code += code >> 0x1
