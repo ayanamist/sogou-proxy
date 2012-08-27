@@ -116,7 +116,8 @@ class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
         self.headers["X-Sogou-Tag"] = calc_sogou_hash(self.headers["X-Sogou-Timestamp"], self.headers["Host"])
 
     def remote_send_requestline(self):
-        self.remote.sendall(self.requestline.encode("ascii") + b"\r\n")
+        self.remote.sendall(self.requestline)
+        self.remote.sendall("\r\n")
 
     def remote_send_headers(self):
         self.remote.sendall(str(self.headers))
