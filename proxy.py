@@ -2,10 +2,8 @@
 # -*- coding:utf-8 -*-
 # modified from http://xiaoxia.org/2011/11/14/update-sogou-proxy-program-with-https-support/
 try:
-    #noinspection PyUnresolvedReferences
     import gevent, gevent.monkey
-
-    gevent.monkey.patch_all()
+    gevent.monkey.patch_all(dns=False)
 except ImportError:
     pass
 
