@@ -25,7 +25,7 @@ import socks
 
 X_SOGOU_AUTH = "9CD285F1E7ADB0BD403C22AD1D545F40/30/853edc6d49ba4e27"
 SERVER_TYPES = [
-    ("edu", 3),
+    ("edu", 16),
     ("ctc", 3),
     ("cnc", 3),
     ("dxt", 3),
