@@ -1,41 +1,23 @@
 #!/usr/bin/python
-# -*- coding:utf-8 -*-
-# modified from http://xiaoxia.org/2011/11/14/update-sogou-proxy-program-with-https-support/
-try:
-    import gevent, gevent.monkey
-    gevent.monkey.patch_all(dns=False)
-except ImportError:
-    pass
 
-import httplib
-import logging
+import asyncore
+import email.parser
 import os
 import random
-import select
 import socket
 import struct
-import sys
-import threading
 import time
-import BaseHTTPServer
+import urlparse
 import ConfigParser
-import SocketServer
-
-import socks
 
 X_SOGOU_AUTH = "9CD285F1E7ADB0BD403C22AD1D545F40/30/853edc6d49ba4e27"
+BUFFER_SIZE = 8192
 SERVER_TYPES = [
     ("edu", 16),
     ("ctc", 3),
     ("cnc", 3),
     ("dxt", 3),
 ]
-BUFFER_SIZE = 32768
-
-# Minimize Memory Usage
-threading.stack_size(128 * 1024)
-sogou_host = None
-use_proxy = False
 
 def calc_sogou_hash(timestamp, host):
     s = "%s%s%s" % (timestamp, host, "SogouExplorerProxy")
@@ -80,158 +62,179 @@ def calc_sogou_hash(timestamp, host):
     return hex(code)[2:].rstrip("L").zfill(8)
 
 
-class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
-    remote = None
+class RequestParser(object):
+    def __init__(self, s):
+        headers_end = s.rindex("\r\n\r\n")
+        if headers_end >= 0:
+            headers_start = s.index("\r\n") + 2
+            self.request_line = s[:headers_start - 2]
+            self.method = self.request_line.split(" ")[0]
+            self.headers_str = s[headers_start:headers_end]
+            fp = email.parser.FeedParser()
+            fp.feed(s[headers_start:headers_end])
+            self.headers = fp.close()
+            header_host = self.headers.get("Host")
+            if header_host is None:
+                http_line = s[:headers_end - 2]
+                url = http_line.split(" ")[1]
+                header_host = urlparse.urlparse(url).netloc.split(":")[0]
+                self.headers_str += "\r\nHost: " + header_host
+            sogou_timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
+            self.headers_str += "\r\nX-Sogou-Auth: " + X_SOGOU_AUTH
+            self.headers_str += "\r\nX-Sogou-Timestamp: " + sogou_timestamp
+            self.headers_str += "\r\nX-Sogou-Tag: " + calc_sogou_hash(sogou_timestamp, header_host)
+            self.partial_content = s[headers_end + 4:]
 
-    # Ignore Connection Failure
-    def handle(self):
+
+class ProxyClient(asyncore.dispatcher):
+    def __init__(self, other):
+        self.other = other
+        asyncore.dispatcher.__init__(self)
+        self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        self.connect((Resolver.ip(), 80))
+
+    def handle_read(self):
+        data = self.recv(BUFFER_SIZE)
+        if data:
+            self.other.write_buffer += data
+        else:
+            if self.other:
+                try:
+                    self.other.handle_close()
+                except socket.error:
+                    pass
+            self.handle_close()
+
+    def handle_write(self):
+        sent = self.send(self.other.read_buffer)
+        self.other.read_buffer = self.other.read_buffer[sent:]
+
+    def handle_close(self):
+        if self.other:
+            try:
+                while self.other.read_buffer:
+                    self.handle_write()
+            except socket.error:
+                pass
+            self.other.other = None
         try:
-            BaseHTTPServer.BaseHTTPRequestHandler.handle(self)
-        except (socks.ProxyError, socket.error):
+            self.close()
+        except socket.error:
             pass
 
-    def finish(self):
-        try:
-            BaseHTTPServer.BaseHTTPRequestHandler.finish(self)
-        except (socks.ProxyError, socket.error):
-            pass
+    def writable(self):
+        return self.other.read_buffer
 
-    # CONNECT Data Transfer
-    def remote_connect(self):
-        if use_proxy:
-            self.remote = socks.socksocket()
-        else:
-            self.remote = socket.socket()
-        self.remote.settimeout(None)
-        try:
-            self.remote.connect((sogou_host, 80))
-        except (socks.ProxyError, socket.error), e:
-            return "%d: %s" % (e.errno, e.message)
 
-    def add_sogou_header(self):
-        self.headers["X-Sogou-Auth"] = X_SOGOU_AUTH
-        self.headers["X-Sogou-Timestamp"] = hex(int(time.time()))[2:].rstrip("L").zfill(8)
-        self.headers["X-Sogou-Tag"] = calc_sogou_hash(self.headers["X-Sogou-Timestamp"], self.headers["Host"])
+class ProxyHandler(asyncore.dispatcher):
+    def __init__(self, sock):
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        self._buffer = ""
+        self.read_buffer = ""
+        self.write_buffer = ""
+        self.other = None
+        self.is_authed = False
+        self.complete_request = False
+        self.content_length = 0
+        asyncore.dispatcher.__init__(self, sock)
 
-    def remote_send_requestline(self):
-        self.remote.sendall(self.requestline)
-        self.remote.sendall("\r\n")
-
-    def remote_send_headers(self):
-        self.remote.sendall(str(self.headers))
-        self.remote.sendall("\r\n")
-
-    def remote_send_postdata(self):
-        if self.command == "POST":
-            self.remote.sendall(self.rfile.read(int(self.headers["Content-Length"])))
-
-    def local_write_connect(self):
-        fdset = [self.remote, self.connection]
-        while True:
-            r, w, _ = select.select(fdset, [], [])
-            if r:
-                for soc in r:
-                    i = fdset.index(soc)
-                    try:
-                        data = soc.recv(BUFFER_SIZE)
-                    except (socks.ProxyError, socket.error), e:
-                        self.send_error(httplib.BAD_GATEWAY, "%d: %s" % (e.errno, e.message))
-                    else:
-                        if not data:
-                            return
-                        the_other_soc = fdset[i ^ 1]
-                        the_other_soc.sendall(data)
-
-    def local_write_other(self):
-        while True:
-            response_data = self.http_response.read(BUFFER_SIZE)
-            if not response_data:
-                break
-            self.wfile.write(response_data)
-
-    def local_write_line(self):
-        # Reply to the browser
-        self.wfile.write("HTTP/1.1 {0:>s} {1:>s}\r\n{2:>s}\r\n".format(str(self.http_response.status),
-            self.http_response.reason, "".join(self.http_response.msg.headers)))
-
-    def build_local_response(self):
-        self.http_response = httplib.HTTPResponse(self.remote, method=self.command)
-        try:
-            self.http_response.begin()
-        except (socks.ProxyError, socket.error), e:
-            logging.exception(e.message)
-
-    def proxy(self):
-        if self.command == "POST" and "Content-Length" not in self.headers:
-            self.send_error(httplib.BAD_REQUEST, "POST method without Content-Length header!")
-            return
-        else:
-            error_msg = self.remote_connect()
-            if error_msg:
-                self.send_error(httplib.BAD_GATEWAY, error_msg)
-                return
-
-        if 'Host' not in self.headers:
-            self.send_error(httplib.BAD_REQUEST, "Host field missing in HTTP request headers.")
-            return
-        self.add_sogou_header()
-        self.remote_send_requestline()
-        self.remote_send_headers()
-        self.remote_send_postdata()
-        self.build_local_response()
-        self.local_write_line()
-        if self.command == "CONNECT":
-            if self.http_response.status == httplib.OK:
-                self.local_write_connect()
+    def handle_read(self):
+        data = self.recv(BUFFER_SIZE)
+        if data:
+            if self.complete_request:
+                self.read_buffer += data
             else:
-                self.send_error(httplib.BAD_GATEWAY,
-                    "CONNECT method but response with status code %d" % self.http_response.status)
+                self._buffer += data
+                if not self.is_authed:
+                    try:
+                        self.rp = RequestParser(self._buffer)
+                    except ValueError:
+                        pass
+                    else:
+                        self.read_buffer = self.rp.request_line + "\r\n" + self.rp.headers_str + "\r\n\r\n"
+                        self.is_authed = True
+                        if not self.other:
+                            self.other = ProxyClient(self)
+                        self._buffer = self.rp.partial_content
+                        self.content_length = int(self.rp.headers.get("Content-Length", "0"), 10)
+                if self.is_authed and self.content_length <= len(self._buffer):
+                    self.read_buffer += self._buffer
+                    if self.rp.method.upper() != "CONNECT":
+                        self.is_authed = False
+                    else:
+                        self.complete_request = True
         else:
-            self.local_write_other()
+            if self.other:
+                try:
+                    self.other.close()
+                except socket.error:
+                    pass
+            self.handle_close()
 
-    def do_proxy(self):
+    def writable(self):
+        return bool(self.write_buffer)
+
+    def handle_write(self):
+        sent = self.send(self.write_buffer)
+        self.write_buffer = self.write_buffer[sent:]
+
+    def handle_close(self):
         try:
-            return self.proxy()
-        except socket.timeout:
-            self.send_error(httplib.GATEWAY_TIMEOUT)
-        except (socks.ProxyError, socket.error):
+            while self.write_buffer:
+                self.handle_write()
+        except socket.error:
             pass
-        except Exception:
-            logging.exception("Exception")
+        try:
+            self.close()
+        except socket.error:
+            pass
 
-    do_HEAD = do_POST = do_GET = do_CONNECT = do_PUT = do_DELETE = do_OPTIONS = do_TRACE = do_proxy
+
+class ProxyServer(asyncore.dispatcher):
+    def __init__(self, host, port):
+        asyncore.dispatcher.__init__(self)
+        self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.set_reuse_addr()
+        self.bind((host, port))
+        self.listen(1)
+
+    def handle_accept(self):
+        pair = self.accept()
+        if pair is not None:
+            sock, addr = pair
+            ProxyHandler(sock)
 
 
-class ThreadingHTTPServer(SocketServer.ThreadingMixIn, BaseHTTPServer.HTTPServer):
-    pass
+class Resolver(object):
+    host = None
+    _ip = None
+
+    @staticmethod
+    def ip():
+        if not Resolver._ip:
+            Resolver._ip = socket.gethostbyname(Resolver.host)
+        return Resolver._ip
 
 
 def main():
-    logging.basicConfig(level=logging.ERROR, format="%(asctime)-15s %(name)-8s %(levelname)-8s %(message)s",
-        datefmt="%m-%d %H:%M:%S", stream=sys.stderr)
-
     config_file = ConfigParser.RawConfigParser()
     config_file.read("%s.ini" % os.path.splitext(__file__)[0])
     listen_ip = config_file.get("listen", "ip")
     listen_port = config_file.getint("listen", "port")
     server_type = SERVER_TYPES[config_file.getint("run", "type")]
-    global sogou_host
-    sogou_host = "h%d.%s.bj.ie.sogou.com" % (random.randint(0, server_type[1]), server_type[0])
+    Resolver.host = "h%d.%s.bj.ie.sogou.com" % (random.randint(0, server_type[1]), server_type[0])
     if config_file.getboolean("proxy", "enabled"):
         proxy_host = config_file.get("proxy", "host")
         proxy_port = config_file.getint("proxy", "port")
+        import socks
+
+        socks.wrapmodule(asyncore)
         proxy_type = getattr(socks, "PROXY_TYPE_" + config_file.get("proxy", "type").upper())
         socks.setdefaultproxy(proxy_type, proxy_host, proxy_port)
-        global use_proxy
-        use_proxy = True
-
-    server = ThreadingHTTPServer((listen_ip, listen_port), Handler)
-
-    print "Sogou Proxy\nRunning on %s\nListening on %s:%d" % (sogou_host, listen_ip, listen_port)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        exit()
+    print "Sogou Proxy\nRunning on %s\nListening on %s:%d" % (Resolver.host, listen_ip, listen_port)
+    ProxyServer(listen_ip, listen_port)
+    asyncore.loop()
 
 if __name__ == "__main__":
     main()
