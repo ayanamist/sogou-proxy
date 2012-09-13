@@ -159,7 +159,8 @@ class ProxyHandler(asyncore.dispatcher):
                         self._buffer = self.rp.partial_content
                         self.content_length = int(self.rp.headers.get("Content-Length", "0"), 10)
                 if self.is_authed and self.content_length <= len(self._buffer):
-                    self.read_buffer += self._buffer
+                    self.read_buffer += self._buffer[:]
+                    self._buffer = self._buffer[self.content_length:]
                     if self.rp.method.upper() != "CONNECT":
                         self.is_authed = False
                     else:
