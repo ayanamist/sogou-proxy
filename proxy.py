@@ -283,7 +283,7 @@ def main():
         datefmt='%m-%d %H:%M:%S', stream=sys.stderr)
 
     SIGHUP = getattr(signal, "SIGHUP", None)
-    if SIGHUP:
+    if SIGHUP is not None:
         signal.signal(SIGHUP, config.sighup_handler) # Windows does not have SIGHUP.
 
     print "Running on %s\nListening on %s:%d" % (config.sogou_host, config.listen_ip, config.listen_port)
