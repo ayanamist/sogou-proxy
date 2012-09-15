@@ -49,6 +49,8 @@ SERVER_TYPES = [
 
 logger = logging.getLogger(__name__)
 
+# TODO: Separate Sogou module, so here is a standalone proxy module with hook/middleware design.
+
 def calc_sogou_hash(timestamp, host):
     s = "%s%s%s" % (timestamp, host, "SogouExplorerProxy")
     length = code = len(s)
@@ -115,13 +117,11 @@ class ProxyClient(asyncore.dispatcher):
     def handle_write(self):
         sent = self.send(self.other.read_buffer)
         self.other.read_buffer = self.other.read_buffer[sent:]
+        return sent
 
     def handle_close(self):
         if self.other:
-            try:
-                while self.other.read_buffer:
-                    self.handle_write()
-            except socket.error:
+            while self.other.read_buffer and self.handle_write() > 0:
                 pass
             self.other.other = None
         try:
@@ -135,7 +135,6 @@ class ProxyClient(asyncore.dispatcher):
 
 class ProxyHandler(asyncore.dispatcher):
     def __init__(self, sock):
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         self._buffer = ""
         self.read_buffer = ""
         self.write_buffer = ""
@@ -182,7 +181,7 @@ class ProxyHandler(asyncore.dispatcher):
                         pass
                     else:
                         self.add_sogou_headers()
-                        self.read_buffer = self.request_line + "\r\n" + str(self.headers) + "\r\n\r\n"
+                        self.read_buffer = self.request_line + "\r\n" + str(self.headers) + "\r\n"
                         self.is_authed = True
                         if not self.other:
                             try:
@@ -213,8 +212,11 @@ class ProxyHandler(asyncore.dispatcher):
     def handle_write(self):
         sent = self.send(self.write_buffer)
         self.write_buffer = self.write_buffer[sent:]
+        return sent
 
     def handle_close(self):
+        while self.write_buffer and self.handle_write() > 0:
+            pass
         try:
             self.close()
         except socket.error:
