@@ -221,12 +221,12 @@ class ProxyHandler(asyncore.dispatcher):
 
 
 class ProxyServer(asyncore.dispatcher):
-    def __init__(self, host, port):
+    def __init__(self, host, port, request_queue_size=5):
         asyncore.dispatcher.__init__(self)
         self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
         self.set_reuse_addr()
         self.bind((host, port))
-        self.listen(1)
+        self.listen(request_queue_size)
 
     def handle_accept(self):
         pair = self.accept()
