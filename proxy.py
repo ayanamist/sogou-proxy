@@ -20,7 +20,6 @@ __maintainer__ = "ayanamist"
 __email__ = "ayanamist@gmail.com"
 
 import asyncore
-import email.parser
 import logging
 import os
 import random
@@ -31,6 +30,13 @@ import sys
 import time
 import urlparse
 import ConfigParser
+import StringIO
+from warnings import filterwarnings, catch_warnings
+
+with catch_warnings():
+    if sys.py3kwarning:
+        filterwarnings("ignore", ".*mimetools has been removed", DeprecationWarning)
+    import mimetools
 
 X_SOGOU_AUTH = "9CD285F1E7ADB0BD403C22AD1D545F40/30/853edc6d49ba4e27"
 BUFFER_SIZE = 8192
@@ -86,30 +92,6 @@ def calc_sogou_hash(timestamp, host):
     return hex(code)[2:].rstrip("L").zfill(8)
 
 
-class RequestParser(object):
-    def __init__(self, s):
-        headers_end = s.rindex("\r\n\r\n")
-        if headers_end >= 0:
-            headers_start = s.index("\r\n") + 2
-            self.request_line = s[:headers_start - 2]
-            self.method = self.request_line.split(" ")[0]
-            self.headers_str = s[headers_start:headers_end]
-            fp = email.parser.FeedParser()
-            fp.feed(s[headers_start:headers_end])
-            self.headers = fp.close()
-            header_host = self.headers.get("Host")
-            if header_host is None:
-                http_line = s[:headers_end - 2]
-                url = http_line.split(" ")[1]
-                header_host = urlparse.urlparse(url).netloc.split(":")[0]
-                self.headers_str += "\r\nHost: " + header_host
-            sogou_timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
-            self.headers_str += "\r\nX-Sogou-Auth: " + X_SOGOU_AUTH
-            self.headers_str += "\r\nX-Sogou-Timestamp: " + sogou_timestamp
-            self.headers_str += "\r\nX-Sogou-Tag: " + calc_sogou_hash(sogou_timestamp, header_host)
-            self.partial_content = s[headers_end + 4:]
-
-
 class ProxyClient(asyncore.dispatcher):
     def __init__(self, other):
         self.other = other
@@ -163,6 +145,27 @@ class ProxyHandler(asyncore.dispatcher):
         self.content_length = 0
         asyncore.dispatcher.__init__(self, sock)
 
+    def parse_request(self):
+        headers_end = self._buffer.rindex("\r\n\r\n")
+        if headers_end >= 0:
+            headers_start = self._buffer.index("\r\n") + 2
+            self.request_line = self._buffer[:headers_start - 2]
+            self.method = self.request_line.split(" ")[0].upper()
+            self.headers = mimetools.Message(StringIO.StringIO(self._buffer[headers_start:headers_end]), 0)
+            header_host = self.headers.get("Host")
+            if header_host is None:
+                http_line = self._buffer[:headers_end - 2]
+                url = http_line.split(" ")[1]
+                header_host = urlparse.urlparse(url).netloc.split(":")[0]
+                self.headers["Host"] = header_host
+            sogou_timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
+            self.headers["X-Sogou-Auth"] = X_SOGOU_AUTH
+            self.headers["X-Sogou-Timestamp"] = sogou_timestamp
+            self.headers["X-Sogou-Tag"] = calc_sogou_hash(sogou_timestamp, header_host)
+            self.http_content = self._buffer[headers_end + 4:]
+            return True
+        return False
+
     def handle_read(self):
         data = self.recv(BUFFER_SIZE)
         if data:
@@ -172,11 +175,11 @@ class ProxyHandler(asyncore.dispatcher):
                 self._buffer += data
                 if not self.is_authed:
                     try:
-                        self.rp = RequestParser(self._buffer)
+                        self.parse_request()
                     except ValueError:
                         pass
                     else:
-                        self.read_buffer = self.rp.request_line + "\r\n" + self.rp.headers_str + "\r\n\r\n"
+                        self.read_buffer = self.request_line + "\r\n" + str(self.headers) + "\r\n\r\n"
                         self.is_authed = True
                         if not self.other:
                             try:
@@ -184,12 +187,12 @@ class ProxyHandler(asyncore.dispatcher):
                             except socket.error:
                                 logger.exception("Fail to create remote socket.")
                                 self.handle_close()
-                        self._buffer = self.rp.partial_content
-                        self.content_length = int(self.rp.headers.get("Content-Length", "0"), 10)
+                        self._buffer = self.http_content
+                        self.content_length = int(self.headers.get("Content-Length", "0"), 10)
                 if self.is_authed and self.content_length <= len(self._buffer):
-                    self.read_buffer += self._buffer[:]
+                    self.read_buffer += self._buffer[:self.content_length]
                     self._buffer = self._buffer[self.content_length:]
-                    if self.rp.method.upper() != "CONNECT":
+                    if self.method != "CONNECT":
                         self.is_authed = False
                     else:
                         self.complete_request = True
@@ -209,11 +212,6 @@ class ProxyHandler(asyncore.dispatcher):
         self.write_buffer = self.write_buffer[sent:]
 
     def handle_close(self):
-        try:
-            while self.write_buffer:
-                self.handle_write()
-        except socket.error:
-            pass
         try:
             self.close()
         except socket.error:
