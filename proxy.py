@@ -2,10 +2,13 @@
 
 import asyncore
 import email.parser
+import logging
 import os
 import random
+import signal
 import socket
 import struct
+import sys
 import time
 import urlparse
 import ConfigParser
@@ -18,6 +21,8 @@ SERVER_TYPES = [
     ("cnc", 3),
     ("dxt", 3),
 ]
+
+logger = logging.getLogger(__name__)
 
 def calc_sogou_hash(timestamp, host):
     s = "%s%s%s" % (timestamp, host, "SogouExplorerProxy")
@@ -92,7 +97,7 @@ class ProxyClient(asyncore.dispatcher):
         asyncore.dispatcher.__init__(self)
         self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
         self.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        self.connect((Resolver.ip(), 80))
+        self.connect((config.sogou_ip, 80))
 
     def handle_read(self):
         data = self.recv(BUFFER_SIZE)
@@ -155,7 +160,11 @@ class ProxyHandler(asyncore.dispatcher):
                         self.read_buffer = self.rp.request_line + "\r\n" + self.rp.headers_str + "\r\n\r\n"
                         self.is_authed = True
                         if not self.other:
-                            self.other = ProxyClient(self)
+                            try:
+                                self.other = ProxyClient(self)
+                            except socket.error:
+                                logger.exception("Fail to create remote socket.")
+                                self.handle_close()
                         self._buffer = self.rp.partial_content
                         self.content_length = int(self.rp.headers.get("Content-Length", "0"), 10)
                 if self.is_authed and self.content_length <= len(self._buffer):
@@ -206,36 +215,61 @@ class ProxyServer(asyncore.dispatcher):
             sock, addr = pair
             ProxyHandler(sock)
 
+    def start(self):
+        asyncore.loop()
 
-class Resolver(object):
-    host = None
-    _ip = None
 
-    @staticmethod
-    def ip():
-        if not Resolver._ip:
-            Resolver._ip = socket.gethostbyname(Resolver.host)
-        return Resolver._ip
+class Config(object):
+    def __init__(self):
+        self._cp = ConfigParser.RawConfigParser()
+        self.parse()
+        self.handle_proxy()
 
+    def parse(self):
+        self._cp.read("%s.ini" % os.path.splitext(__file__)[0])
+        self.listen_ip = self._cp.get("listen", "ip")
+        self.listen_port = self._cp.getint("listen", "port")
+        self.server_type = SERVER_TYPES[self._cp.getint("run", "type")]
+        self.sogou_host = "h%d.%s.bj.ie.sogou.com" % (random.randint(0, self.server_type[1]), self.server_type[0])
+        self._ip = None
+        self.proxy_enabled = self._cp.getboolean("proxy", "enabled")
+        self.proxy_host = self._cp.get("proxy", "host")
+        self.proxy_port = self._cp.getint("proxy", "port")
+        self.proxy_type = self._cp.get("proxy", "type").upper()
+
+    @property
+    def sogou_ip(self):
+        if not self._ip:
+            self._ip = socket.gethostbyname(self.sogou_host)
+        return self._ip
+
+    def sighup_handler(self, *_):
+        self.parse()
+        self.handle_proxy()
+
+    def handle_proxy(self):
+        if self.proxy_enabled:
+            import socks
+
+            proxy_type = getattr(socks, "PROXY_TYPE_" + self.proxy_type)
+            socks.setdefaultproxy(proxy_type, self.proxy_host, self.proxy_port)
+            socks.wrapmodule(asyncore)
+        else:
+            asyncore.socket.socket = socket.socket
+
+config = Config()
 
 def main():
-    config_file = ConfigParser.RawConfigParser()
-    config_file.read("%s.ini" % os.path.splitext(__file__)[0])
-    listen_ip = config_file.get("listen", "ip")
-    listen_port = config_file.getint("listen", "port")
-    server_type = SERVER_TYPES[config_file.getint("run", "type")]
-    Resolver.host = "h%d.%s.bj.ie.sogou.com" % (random.randint(0, server_type[1]), server_type[0])
-    if config_file.getboolean("proxy", "enabled"):
-        proxy_host = config_file.get("proxy", "host")
-        proxy_port = config_file.getint("proxy", "port")
-        import socks
+    logging.basicConfig(level=logging.ERROR, format='%(asctime)-15s %(name)-8s %(levelname)-8s %(message)s',
+        datefmt='%m-%d %H:%M:%S', stream=sys.stderr)
 
-        socks.wrapmodule(asyncore)
-        proxy_type = getattr(socks, "PROXY_TYPE_" + config_file.get("proxy", "type").upper())
-        socks.setdefaultproxy(proxy_type, proxy_host, proxy_port)
-    print "Sogou Proxy\nRunning on %s\nListening on %s:%d" % (Resolver.host, listen_ip, listen_port)
-    ProxyServer(listen_ip, listen_port)
-    asyncore.loop()
+    SIGHUP = getattr(signal, "SIGHUP", None)
+    if SIGHUP:
+        signal.signal(SIGHUP, config.sighup_handler) # Windows does not have SIGHUP.
+
+    print "Running on %s\nListening on %s:%d" % (config.sogou_host, config.listen_ip, config.listen_port)
+    proxy = ProxyServer(config.listen_ip, config.listen_port)
+    proxy.start()
 
 if __name__ == "__main__":
     main()
