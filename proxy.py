@@ -234,7 +234,7 @@ class ProxyServer(asyncore.dispatcher):
             sock, addr = pair
             ProxyHandler(sock)
 
-    def start(self):
+    def serve_forever(self):
         asyncore.loop()
 
 
@@ -287,8 +287,7 @@ def main():
         signal.signal(SIGHUP, config.sighup_handler) # Windows does not have SIGHUP.
 
     print "Running on %s\nListening on %s:%d" % (config.sogou_host, config.listen_ip, config.listen_port)
-    proxy = ProxyServer(config.listen_ip, config.listen_port)
-    proxy.start()
+    ProxyServer(config.listen_ip, config.listen_port).serve_forever()
 
 if __name__ == "__main__":
     main()
