@@ -158,13 +158,15 @@ class ProxyHandler(asyncore.dispatcher):
                 url = http_line.split(" ")[1]
                 header_host = urlparse.urlparse(url).netloc.split(":")[0]
                 self.headers["Host"] = header_host
-            sogou_timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
-            self.headers["X-Sogou-Auth"] = X_SOGOU_AUTH
-            self.headers["X-Sogou-Timestamp"] = sogou_timestamp
-            self.headers["X-Sogou-Tag"] = calc_sogou_hash(sogou_timestamp, header_host)
             self.http_content = self._buffer[headers_end + 4:]
             return True
         return False
+
+    def add_sogou_headers(self):
+        sogou_timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
+        self.headers["X-Sogou-Auth"] = X_SOGOU_AUTH
+        self.headers["X-Sogou-Timestamp"] = sogou_timestamp
+        self.headers["X-Sogou-Tag"] = calc_sogou_hash(sogou_timestamp, self.headers["Host"])
 
     def handle_read(self):
         data = self.recv(BUFFER_SIZE)
@@ -179,6 +181,7 @@ class ProxyHandler(asyncore.dispatcher):
                     except ValueError:
                         pass
                     else:
+                        self.add_sogou_headers()
                         self.read_buffer = self.request_line + "\r\n" + str(self.headers) + "\r\n\r\n"
                         self.is_authed = True
                         if not self.other:
