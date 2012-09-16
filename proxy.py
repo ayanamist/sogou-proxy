@@ -99,7 +99,7 @@ class ProxyClient(asyncore.dispatcher):
         self.other = other
         asyncore.dispatcher.__init__(self)
         self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        self.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
         self.connect((config.sogou_ip, 80))
 
     def handle_read(self):
@@ -143,6 +143,7 @@ class ProxyHandler(asyncore.dispatcher):
         self.complete_request = False
         self.content_length = 0
         asyncore.dispatcher.__init__(self, sock)
+        self.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
 
     def parse_request(self):
         headers_end = self._buffer.rindex("\r\n\r\n")
@@ -227,6 +228,7 @@ class ProxyServer(asyncore.dispatcher):
     def __init__(self, host, port, request_queue_size=5):
         asyncore.dispatcher.__init__(self)
         self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
         self.set_reuse_addr()
         self.bind((host, port))
         self.listen(request_queue_size)
