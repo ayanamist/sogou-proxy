@@ -49,8 +49,6 @@ SERVER_TYPES = [
 
 logger = logging.getLogger(__name__)
 
-# TODO: Separate Sogou module, so here is a standalone proxy module with hook/middleware design.
-
 def calc_sogou_hash(timestamp, host):
     s = "%s%s%s" % (timestamp, host, "SogouExplorerProxy")
     length = code = len(s)
@@ -245,6 +243,7 @@ class ProxyServer(asyncore.dispatcher):
 
 class Config(object):
     def __init__(self):
+        self._socket_backup = None
         self._cp = ConfigParser.RawConfigParser()
         self.parse()
         self.handle_proxy()
@@ -272,6 +271,8 @@ class Config(object):
         self.handle_proxy()
 
     def handle_proxy(self):
+        if not self._socket_backup:
+            self._socket_backup = socket.socket
         if self.proxy_enabled:
             import socks
 
@@ -279,7 +280,7 @@ class Config(object):
             socks.setdefaultproxy(proxy_type, self.proxy_host, self.proxy_port)
             socks.wrapmodule(asyncore)
         else:
-            asyncore.socket.socket = socket.socket
+            asyncore.socket.socket = self._socket_backup
 
 config = Config()
 
