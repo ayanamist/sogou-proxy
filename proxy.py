@@ -92,6 +92,17 @@ def calc_sogou_hash(timestamp, host):
     return hex(code)[2:].rstrip("L").zfill(8)
 
 
+# Because original Message class use \n as line breaker, we must rewrite it to comply with HTTP specification.
+class PatchedMessage(mimetools.Message):
+    def __setitem__(self, name, value):
+        del self[name] # Won't fail if it doesn't exist
+        self.dict[name.lower()] = value
+        text = name + ": " + value
+        if self.headers and self.headers[-1][-1] != "\n":
+            self.headers[-1] += "\r\n"
+        self.headers.append(text + "\r\n")
+
+
 class ProxyClient(asyncore.dispatcher):
     def __init__(self, other):
         self.other = other
@@ -149,7 +160,7 @@ class ProxyHandler(asyncore.dispatcher):
             headers_start = self._buffer.index("\r\n") + 2
             self.request_line = self._buffer[:headers_start - 2]
             self.method = self.request_line.split(" ")[0].upper()
-            self.headers = mimetools.Message(StringIO.StringIO(self._buffer[headers_start:headers_end]), 0)
+            self.headers = PatchedMessage(StringIO.StringIO(self._buffer[headers_start:headers_end]), 0)
             header_host = self.headers.get("Host")
             if header_host is None:
                 http_line = self._buffer[:headers_end - 2]
