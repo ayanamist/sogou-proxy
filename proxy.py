@@ -23,6 +23,7 @@ import asyncore
 import logging
 import os
 import random
+import select
 import signal
 import socket
 import struct
@@ -91,6 +92,16 @@ def calc_sogou_hash(timestamp, host):
     code &= 0xffffffff
     return hex(code)[2:].rstrip("L").zfill(8)
 
+
+def patch_asyncore_epoll():
+    epoll = getattr(select, "epoll", None)
+    if epoll:
+        select.poll = epoll
+        select.POLLIN = select.EPOLLIN
+        select.POLLOUT = select.EPOLLOUT
+        select.POLLPRI = select.EPOLLPRI
+        select.POLLERR = select.EPOLLERR
+        select.POLLHUP = select.EPOLLHUP
 
 # Because original Message class use \n as line breaker, we must rewrite it to comply with HTTP specification.
 class PatchedMessage(mimetools.Message):
@@ -249,7 +260,7 @@ class ProxyServer(asyncore.dispatcher):
             ProxyHandler(sock)
 
     def serve_forever(self):
-        asyncore.loop()
+        asyncore.loop(use_poll=True)
 
 
 class Config(object):
@@ -298,6 +309,8 @@ config = Config()
 def main():
     logging.basicConfig(level=logging.ERROR, format='%(asctime)-15s %(name)-8s %(levelname)-8s %(message)s',
         datefmt='%m-%d %H:%M:%S', file="%s.log" % os.path.splitext(__file__)[0])
+
+    patch_asyncore_epoll()
 
     SIGHUP = getattr(signal, "SIGHUP", None)
     if SIGHUP is not None:
