@@ -297,7 +297,7 @@ config = Config()
 
 def main():
     logging.basicConfig(level=logging.ERROR, format='%(asctime)-15s %(name)-8s %(levelname)-8s %(message)s',
-        datefmt='%m-%d %H:%M:%S', stream=sys.stderr)
+        datefmt='%m-%d %H:%M:%S', file="%s.log" % os.path.splitext(__file__)[0])
 
     SIGHUP = getattr(signal, "SIGHUP", None)
     if SIGHUP is not None:
