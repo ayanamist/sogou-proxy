@@ -267,11 +267,10 @@ class Config(object):
     def __init__(self):
         self._socket_backup = None
         self._cp = ConfigParser.RawConfigParser()
-        self.parse()
-        self.handle_proxy()
 
-    def parse(self):
-        self._cp.read("%s.ini" % os.path.splitext(__file__)[0])
+    def read(self, path):
+        self._config_path = path
+        self._cp.read(path)
         self.listen_ip = self._cp.get("listen", "ip")
         self.listen_port = self._cp.getint("listen", "port")
         self.server_type = SERVER_TYPES[self._cp.getint("run", "type")]
@@ -281,6 +280,7 @@ class Config(object):
         self.proxy_host = self._cp.get("proxy", "host")
         self.proxy_port = self._cp.getint("proxy", "port")
         self.proxy_type = self._cp.get("proxy", "type").upper()
+        self.handle_proxy()
 
     @property
     def sogou_ip(self):
@@ -289,8 +289,7 @@ class Config(object):
         return self._ip
 
     def sighup_handler(self, *_):
-        self.parse()
-        self.handle_proxy()
+        self.read(self._config_path)
 
     def handle_proxy(self):
         if not self._socket_backup:
@@ -310,11 +309,13 @@ def main():
     logging.basicConfig(level=logging.ERROR, format='%(asctime)-15s %(name)-8s %(levelname)-8s %(message)s',
         datefmt='%m-%d %H:%M:%S', file="%s.log" % os.path.splitext(__file__)[0])
 
+    config.read("%s.ini" % os.path.splitext(__file__)[0])
+
     patch_asyncore_epoll()
 
-    SIGHUP = getattr(signal, "SIGHUP", None)
+    SIGHUP = getattr(signal, "SIGHUP", None) # Windows does not have SIGHUP.
     if SIGHUP is not None:
-        signal.signal(SIGHUP, config.sighup_handler) # Windows does not have SIGHUP.
+        signal.signal(SIGHUP, config.sighup_handler)
 
     print "Running on %s\nListening on %s:%d" % (config.sogou_host, config.listen_ip, config.listen_port)
     ProxyServer(config.listen_ip, config.listen_port).serve_forever()
