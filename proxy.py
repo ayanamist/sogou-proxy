@@ -27,17 +27,9 @@ import select
 import signal
 import socket
 import struct
-import sys
 import time
 import urlparse
 import ConfigParser
-import StringIO
-from warnings import filterwarnings, catch_warnings
-
-with catch_warnings():
-    if sys.py3kwarning:
-        filterwarnings("ignore", ".*mimetools has been removed", DeprecationWarning)
-    import mimetools
 
 X_SOGOU_AUTH = "9CD285F1E7ADB0BD403C22AD1D545F40/30/853edc6d49ba4e27"
 BUFFER_SIZE = 65536
@@ -103,18 +95,68 @@ def patch_asyncore_epoll():
         select.POLLERR = select.EPOLLERR
         select.POLLHUP = select.EPOLLHUP
 
-# Because original Message class use \n as line breaker, we must rewrite it to comply with HTTP specification.
-class PatchedMessage(mimetools.Message):
-    def __setitem__(self, name, value):
-        del self[name] # Won't fail if it doesn't exist
-        self.dict[name.lower()] = value
-        text = name + ": " + value
-        if self.headers and self.headers[-1][-1] != "\n":
-            self.headers[-1] += "\r\n"
-        self.headers.append(text + "\r\n")
+
+class SimpleHTTPHeaders(dict):
+    def __init__(self, s):
+        dict.__init__(self)
+        for line in s.split("\r\n"):
+            k, v = line.split(":", 1)
+            k = k.rstrip()
+            v = v.lstrip()
+            self.add(k, v)
+
+    def __setitem__(self, key, value):
+        # Python bug: we should first use None to create this key,
+        # otherwise dict object will extract the only value of the list.
+        dict.__setitem__(self, key, None)
+        dict.__setitem__(self, key, [value])
+
+    def __getitem__(self, key):
+        ikey = key.lower()
+        for k, v in self.iteritems():
+            if k.lower() == ikey:
+                return v
+        raise KeyError()
+
+    def __str__(self):
+        return "\r\n".join(k + ": " + v for k, v in self.iteritems())
+
+    def add(self, key, value):
+        if key not in self:
+            self[key] = value
+        else:
+            self[key].append(value)
+
+    def getlist(self, key):
+        return self[key]
+
+    def setlist(self, key, new_list):
+        self[key] = new_list
+
+    def items(self):
+        return list(self.iteritems())
+
+    def iteritems(self):
+        for k, lv in dict.iteritems(self):
+            for v in lv:
+                yield k, v
+
+    def values(self):
+        return list(self.itervalues())
+
+    def itervalues(self):
+        for lv in dict.itervalues(self):
+            for v in lv:
+                yield v
 
 
-class ProxyClient(asyncore.dispatcher):
+class FixedDispatcher(asyncore.dispatcher):
+    def handle_error(self):
+        logger.exception("Error")
+        self.handle_close()
+
+
+class ProxyClient(FixedDispatcher):
     def __init__(self, other):
         self.other = other
         asyncore.dispatcher.__init__(self)
@@ -153,7 +195,7 @@ class ProxyClient(asyncore.dispatcher):
         return self.other.read_buffer
 
 
-class ProxyHandler(asyncore.dispatcher):
+class ProxyHandler(FixedDispatcher):
     def __init__(self, sock):
         self._buffer = ""
         self.read_buffer = ""
@@ -171,7 +213,7 @@ class ProxyHandler(asyncore.dispatcher):
             headers_start = self._buffer.index("\r\n") + 2
             self.request_line = self._buffer[:headers_start - 2]
             self.method = self.request_line.split(" ")[0].upper()
-            self.headers = PatchedMessage(StringIO.StringIO(self._buffer[headers_start:headers_end]), 0)
+            self.headers = SimpleHTTPHeaders(self._buffer[headers_start:headers_end])
             header_host = self.headers.get("Host")
             if header_host is None:
                 http_line = self._buffer[:headers_end - 2]
@@ -202,7 +244,7 @@ class ProxyHandler(asyncore.dispatcher):
                         pass
                     else:
                         self.add_sogou_headers()
-                        self.read_buffer = self.request_line + "\r\n" + str(self.headers) + "\r\n"
+                        self.read_buffer = self.request_line + "\r\n" + str(self.headers) + "\r\n\r\n"
                         self.is_authed = True
                         if not self.other:
                             try:
@@ -244,7 +286,7 @@ class ProxyHandler(asyncore.dispatcher):
             pass
 
 
-class ProxyServer(asyncore.dispatcher):
+class ProxyServer(FixedDispatcher):
     def __init__(self, host, port, request_queue_size=5):
         asyncore.dispatcher.__init__(self)
         self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
