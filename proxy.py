@@ -127,6 +127,14 @@ class SimpleHTTPHeaders(dict):
         else:
             self[key].append(value)
 
+    def get(self, k, d=None):
+        try:
+            v = self[k]
+        except KeyError:
+            return d
+        else:
+            return v
+
     def getlist(self, key):
         return self[key]
 
@@ -262,9 +270,11 @@ class ProxyHandler(FixedDispatcher):
                     else:
                         self.complete_request = True
         else:
+            if self._buffer:
+                self.read_buffer += self._buffer
             if self.other:
                 try:
-                    self.other.close()
+                    self.other.handle_close()
                 except socket.error:
                     pass
             self.handle_close()
