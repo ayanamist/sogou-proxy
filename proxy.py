@@ -20,6 +20,7 @@ __maintainer__ = "ayanamist"
 __email__ = "ayanamist@gmail.com"
 
 import asyncore
+import httplib
 import logging
 import os
 import random
@@ -173,7 +174,7 @@ class SimpleHTTPHeaders(dict):
                 yield v
 
 
-class FixedDispatcher(asyncore.dispatcher):
+class FixedDispatcher(object, asyncore.dispatcher):
     def handle_error(self):
         logger.exception("Error")
         self.handle_close()
@@ -195,23 +196,17 @@ class ReadWriteDispatcher(FixedDispatcher):
 
     def handle_close(self):
         self.closing = True
-        if self.other:
-            if self.writing:
-                if not self.other.closing:
-                    self.other.handle_close()
-            else:
-                while self.write_buffer and self.handle_write() > 0:
-                    pass
-        if self.other:
-            self.other.other = None
-        try:
-            self.close()
-        except socket.error:
-            pass
+        if not self.writing:
+            while self.write_buffer and self.handle_write() > 0:
+                pass
+        if self.other and not self.other.closing:
+            self.other.handle_close()
+        self.close()
 
 
 class ProxyClient(ReadWriteDispatcher):
     def __init__(self, other):
+        self.traffic_received = False
         self.writing = False
         self.other = other
         asyncore.dispatcher.__init__(self)
@@ -221,7 +216,10 @@ class ProxyClient(ReadWriteDispatcher):
 
     @property
     def read_buffer(self):
-        return self.other.write_buffer
+        if self.other:
+            return self.other.write_buffer
+        elif not self.closing:
+            self.handle_close()
 
     @read_buffer.setter
     def read_buffer(self, value):
@@ -229,7 +227,10 @@ class ProxyClient(ReadWriteDispatcher):
 
     @property
     def write_buffer(self):
-        return self.other.read_buffer
+        if self.other:
+            return self.other.read_buffer
+        elif not self.closing:
+            self.handle_close()
 
     @write_buffer.setter
     def write_buffer(self, value):
@@ -238,9 +239,13 @@ class ProxyClient(ReadWriteDispatcher):
     def handle_read(self):
         data = self.recv(BUFFER_SIZE)
         if data:
+            self.traffic_received = True
             self.read_buffer += data
         else:
-            self.handle_close()
+            if not self.traffic_received:
+                self.other.send_error(502, "No data received")
+            else:
+                self.handle_close()
 
 
 class ProxyHandler(ReadWriteDispatcher):
@@ -273,6 +278,19 @@ class ProxyHandler(ReadWriteDispatcher):
             return True
         return False
 
+    def send_error(self, code, message=None):
+        response_dict = {
+            "status_code": code,
+            "status_message": httplib.responses.get(code, "???"),
+        }
+        if message is None:
+            response_dict["message"] = response_dict["status_message"]
+        else:
+            response_dict["message"] = message
+        response_dict["content_length"] = len(response_dict["message"])
+        self.write_buffer = "HTTP/1.0 %(status_code)d %(status_message)s\r\nContent-Type: text/html\r\nContent-Length: %(content_length)d\r\n\r\n%(message)s" % response_dict
+        self.handle_close()
+
     def add_sogou_headers(self):
         sogou_timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
         self.headers["X-Sogou-Auth"] = X_SOGOU_AUTH
@@ -292,17 +310,14 @@ class ProxyHandler(ReadWriteDispatcher):
                     except ValueError:
                         pass
                     else:
-                        logger.debug(self.request_line)
                         self.add_sogou_headers()
                         self.read_buffer = self.request_line + "\r\n" + str(self.headers) + "\r\n\r\n"
                         self.is_authed = True
-                        if not self.other:
+                        if not self.other or not self.other.connected:
                             try:
                                 self.other = ProxyClient(self)
                             except socket.error, e:
-                                logger.error("Fail to create remote socket: %r" % e)
-                                self.handle_close()
-                                return
+                                return self.send_error(502, "Failed to connect: %r" % e)
                         self._buffer = self.http_content
                         self.content_length = int(self.headers.get("Content-Length", "0"), 10)
                 if self.is_authed and self.content_length <= len(self._buffer):
@@ -348,7 +363,7 @@ class Config(object):
         self.listen_ip = self._cp.get("listen", "ip")
         self.listen_port = self._cp.getint("listen", "port")
         self.server_type = SERVER_TYPES[self._cp.getint("run", "type")]
-        self.sogou_host = "h%d.%s.bj.ie.sogou.com" % (random.randint(0, self.server_type[1]), self.server_type[0])
+        self.sogou_host = "h%d.%s.bj.ie.sogou.com" % (random.randint(0, self.server_type[1] - 1), self.server_type[0])
         self._ip = None
         self.proxy_enabled = self._cp.getboolean("proxy", "enabled")
         self.proxy_host = self._cp.get("proxy", "host")
@@ -359,10 +374,7 @@ class Config(object):
     @property
     def sogou_ip(self):
         if not self._ip:
-            try:
-                self._ip = socket.gethostbyname(self.sogou_host)
-            except socket.error:
-                logger.error("Failed to resolve %s to ip" % self.sogou_host)
+            self._ip = socket.gethostbyname(self.sogou_host)
         return self._ip
 
     def sighup_handler(self, *_):
