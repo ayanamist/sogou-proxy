@@ -164,47 +164,73 @@ class FixedDispatcher(asyncore.dispatcher):
         self.handle_close()
 
 
-class ProxyClient(FixedDispatcher):
-    def __init__(self, other):
-        self.other = other
-        asyncore.dispatcher.__init__(self)
-        self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
-        self.connect((config.sogou_ip, 80))
-
-    def handle_read(self):
-        data = self.recv(BUFFER_SIZE)
-        if data:
-            self.other.write_buffer += data
-        else:
-            if self.other:
-                try:
-                    self.other.handle_close()
-                except socket.error:
-                    pass
-            self.handle_close()
+class ReadWriteDispatcher(FixedDispatcher):
+    def writable(self):
+        return bool(self.write_buffer)
 
     def handle_write(self):
-        sent = self.send(self.other.read_buffer)
-        self.other.read_buffer = self.other.read_buffer[sent:]
-        return sent
+        if self.write_buffer:
+            self.writing = True
+            sent = self.send(self.write_buffer)
+            if sent:
+                self.writing = False
+                self.write_buffer = self.write_buffer[sent:]
+            else:
+                self.handle_close()
 
     def handle_close(self):
+        self.closing = True
         if self.other:
-            while self.other.read_buffer and self.handle_write() > 0:
-                pass
+            if self.writing:
+                if not self.other.closing:
+                    self.other.handle_close()
+            else:
+                while self.write_buffer and self.handle_write() > 0:
+                    pass
+        if self.other:
             self.other.other = None
         try:
             self.close()
         except socket.error:
             pass
 
-    def writable(self):
+
+class ProxyClient(ReadWriteDispatcher):
+    def __init__(self, other):
+        self.writing = False
+        self.other = other
+        asyncore.dispatcher.__init__(self)
+        self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
+        self.connect((config.sogou_ip, 80))
+
+    @property
+    def read_buffer(self):
+        return self.other.write_buffer
+
+    @read_buffer.setter
+    def read_buffer(self, value):
+        self.other.write_buffer = value
+
+    @property
+    def write_buffer(self):
         return self.other.read_buffer
 
+    @write_buffer.setter
+    def write_buffer(self, value):
+        self.other.read_buffer = value
 
-class ProxyHandler(FixedDispatcher):
+    def handle_read(self):
+        data = self.recv(BUFFER_SIZE)
+        if data:
+            self.read_buffer += data
+        else:
+            self.handle_close()
+
+
+class ProxyHandler(ReadWriteDispatcher):
     def __init__(self, sock):
+        self.writing = False
         self._buffer = ""
         self.read_buffer = ""
         self.write_buffer = ""
@@ -260,6 +286,7 @@ class ProxyHandler(FixedDispatcher):
                             except socket.error:
                                 logger.exception("Fail to create remote socket.")
                                 self.handle_close()
+                                return
                         self._buffer = self.http_content
                         self.content_length = int(self.headers.get("Content-Length", "0"), 10)
                 if self.is_authed and self.content_length <= len(self._buffer):
@@ -272,28 +299,7 @@ class ProxyHandler(FixedDispatcher):
         else:
             if self._buffer:
                 self.read_buffer += self._buffer
-            if self.other:
-                try:
-                    self.other.handle_close()
-                except socket.error:
-                    pass
             self.handle_close()
-
-    def writable(self):
-        return bool(self.write_buffer)
-
-    def handle_write(self):
-        sent = self.send(self.write_buffer)
-        self.write_buffer = self.write_buffer[sent:]
-        return sent
-
-    def handle_close(self):
-        while self.write_buffer and self.handle_write() > 0:
-            pass
-        try:
-            self.close()
-        except socket.error:
-            pass
 
 
 class ProxyServer(FixedDispatcher):
