@@ -299,8 +299,8 @@ class ProxyHandler(ReadWriteDispatcher):
                         if not self.other:
                             try:
                                 self.other = ProxyClient(self)
-                            except socket.error:
-                                logger.exception("Fail to create remote socket.")
+                            except socket.error, e:
+                                logger.error("Fail to create remote socket: %r" % e)
                                 self.handle_close()
                                 return
                         self._buffer = self.http_content
@@ -359,7 +359,10 @@ class Config(object):
     @property
     def sogou_ip(self):
         if not self._ip:
-            self._ip = socket.gethostbyname(self.sogou_host)
+            try:
+                self._ip = socket.gethostbyname(self.sogou_host)
+            except socket.error:
+                logger.error("Failed to resolve %s to ip" % self.sogou_host)
         return self._ip
 
     def sighup_handler(self, *_):
