@@ -42,6 +42,21 @@ SERVER_TYPES = [
 
 logger = logging.getLogger(__name__)
 
+def setup_logger():
+    logger.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("%(asctime)-15s %(name)-8s %(levelname)-5s %(message)s", "%m-%d %H:%M:%S")
+
+    file_handler = logging.FileHandler("%s.log" % os.path.splitext(__file__)[0])
+    file_handler.setLevel(logging.ERROR)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    stderr_handler = logging.StreamHandler()
+    stderr_handler.setLevel(logging.DEBUG)
+    stderr_handler.setFormatter(formatter)
+    logger.addHandler(stderr_handler)
+
+
 def calc_sogou_hash(timestamp, host):
     s = "%s%s%s" % (timestamp, host, "SogouExplorerProxy")
     length = code = len(s)
@@ -277,6 +292,7 @@ class ProxyHandler(ReadWriteDispatcher):
                     except ValueError:
                         pass
                     else:
+                        logger.debug(self.request_line)
                         self.add_sogou_headers()
                         self.read_buffer = self.request_line + "\r\n" + str(self.headers) + "\r\n\r\n"
                         self.is_authed = True
@@ -364,8 +380,7 @@ class Config(object):
 config = Config()
 
 def main():
-    logging.basicConfig(level=logging.ERROR, format='%(asctime)-15s %(name)-8s %(levelname)-8s %(message)s',
-        datefmt='%m-%d %H:%M:%S', file="%s.log" % os.path.splitext(__file__)[0])
+    setup_logger()
 
     config.read("%s.ini" % os.path.splitext(__file__)[0])
 
