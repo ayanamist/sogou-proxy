@@ -59,7 +59,7 @@ def setup_logger():
 
 
 def calc_sogou_hash(timestamp, host):
-    s = "%s%s%s" % (timestamp, host, "SogouExplorerProxy")
+    s = timestamp + host + "SogouExplorerProxy"
     length = code = len(s)
     dwords = code // 4
     rest = code % 4
@@ -124,20 +124,19 @@ class SimpleHTTPHeaders(dict):
     def __setitem__(self, key, value):
         # Python bug: we should first use None to create this key,
         # otherwise dict object will extract the only value of the list.
+        key = key.lower()
         dict.__setitem__(self, key, None)
         dict.__setitem__(self, key, [value])
 
     def __getitem__(self, key):
-        ikey = key.lower()
-        for k, v in self.iteritems():
-            if k.lower() == ikey:
-                return v
-        raise KeyError()
+        value = dict.__getitem__(self, key.lower())
+        return value[0]
 
     def __str__(self):
-        return "\r\n".join(k + ": " + v for k, v in self.iteritems())
+        return "\r\n".join("%s: %s" % (k.title(), v) for k, v in self.iteritems())
 
     def add(self, key, value):
+        key = key.lower()
         if key not in self:
             self[key] = value
         else:
@@ -145,47 +144,54 @@ class SimpleHTTPHeaders(dict):
 
     def get(self, k, d=None):
         try:
-            v = self[k]
+            v = self[k.lower()]
         except KeyError:
             return d
         else:
             return v
 
     def getlist(self, key):
-        return self[key]
+        return self[key.lower()]
 
     def setlist(self, key, new_list):
-        self[key] = new_list
-
-    def items(self):
-        return list(self.iteritems())
+        self[key.lower()] = new_list
 
     def iteritems(self):
         for k, lv in dict.iteritems(self):
             for v in lv:
-                yield k, v
+                yield k.title(), v
 
-    def values(self):
-        return list(self.itervalues())
+    def items(self):
+        return list(self.iteritems())
+
+    def iterkeys(self):
+        for k in dict.iterkeys(self):
+            yield k.title()
+
+    def keys(self):
+        return list(self.iterkeys())
 
     def itervalues(self):
         for lv in dict.itervalues(self):
             for v in lv:
                 yield v
 
+    def values(self):
+        return list(self.itervalues())
 
-class FixedDispatcher(object, asyncore.dispatcher):
+
+class LoggerDispatcher(object, asyncore.dispatcher):
     def handle_error(self):
         logger.exception("Error")
         self.handle_close()
 
 
-class ReadWriteDispatcher(FixedDispatcher):
+class ReadWriteDispatcher(LoggerDispatcher):
     def writable(self):
         return bool(self.write_buffer)
 
     def handle_write(self):
-        if self.write_buffer:
+        if self.writable():
             self.writing = True
             sent = self.send(self.write_buffer)
             if sent:
@@ -197,7 +203,7 @@ class ReadWriteDispatcher(FixedDispatcher):
     def handle_close(self):
         self.closing = True
         if not self.writing:
-            while self.write_buffer and self.handle_write() > 0:
+            while self.writable() and self.handle_write() > 0:
                 pass
         if self.other and not self.other.closing:
             self.other.handle_close()
@@ -209,32 +215,35 @@ class ProxyClient(ReadWriteDispatcher):
         self.traffic_received = False
         self.writing = False
         self.other = other
+
         asyncore.dispatcher.__init__(self)
         self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
         self.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
         self.connect((config.sogou_ip, 80))
 
-    @property
-    def read_buffer(self):
+    def __get_read_buffer(self):
         if self.other:
             return self.other.write_buffer
         elif not self.closing:
             self.handle_close()
+            return ""
 
-    @read_buffer.setter
-    def read_buffer(self, value):
+    def __set_read_buffer(self, value):
         self.other.write_buffer = value
 
-    @property
-    def write_buffer(self):
+    read_buffer = property(__get_read_buffer, __set_read_buffer)
+
+    def __get_write_buffer(self):
         if self.other:
             return self.other.read_buffer
         elif not self.closing:
             self.handle_close()
+            return ""
 
-    @write_buffer.setter
-    def write_buffer(self, value):
+    def __set_write_buffer(self, value):
         self.other.read_buffer = value
+
+    write_buffer = property(__get_write_buffer, __set_write_buffer)
 
     def handle_read(self):
         data = self.recv(BUFFER_SIZE)
@@ -251,31 +260,33 @@ class ProxyClient(ReadWriteDispatcher):
 class ProxyHandler(ReadWriteDispatcher):
     def __init__(self, sock):
         self.writing = False
-        self._buffer = ""
+        self.unauth_buffer = ""
         self.read_buffer = ""
         self.write_buffer = ""
         self.other = None
         self.is_authed = False
         self.complete_request = False
         self.content_length = 0
+
         asyncore.dispatcher.__init__(self, sock)
         self.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
 
     def parse_request(self):
-        headers_end = self._buffer.rindex("\r\n\r\n")
+        headers_end = self.unauth_buffer.rfind("\r\n\r\n")
         if headers_end >= 0:
-            headers_start = self._buffer.index("\r\n") + 2
-            self.request_line = self._buffer[:headers_start - 2]
-            self.method = self.request_line.split(" ")[0].upper()
-            self.headers = SimpleHTTPHeaders(self._buffer[headers_start:headers_end])
-            header_host = self.headers.get("Host")
-            if header_host is None:
-                http_line = self._buffer[:headers_end - 2]
-                url = http_line.split(" ")[1]
-                header_host = urlparse.urlparse(url).netloc.split(":")[0]
-                self.headers["Host"] = header_host
-            self.http_content = self._buffer[headers_end + 4:]
-            return True
+            headers_start = self.unauth_buffer.find("\r\n") + 2
+            if headers_start >= 0:
+                self.request_line = self.unauth_buffer[:headers_start-2]
+                self.method = self.request_line.split(" ")[0].upper()
+                self.headers = SimpleHTTPHeaders(self.unauth_buffer[headers_start:headers_end])
+                header_host = self.headers.get("Host")
+                if header_host is None:
+                    http_line = self.unauth_buffer[:headers_end-2]
+                    url = http_line.split(" ")[1]
+                    header_host = urlparse.urlparse(url).netloc.split(":")[0]
+                    self.headers["Host"] = header_host
+                self.http_content = self.unauth_buffer[headers_end+4:]
+                return True
         return False
 
     def send_error(self, code, message=None):
@@ -303,37 +314,32 @@ class ProxyHandler(ReadWriteDispatcher):
             if self.complete_request:
                 self.read_buffer += data
             else:
-                self._buffer += data
-                if not self.is_authed:
-                    try:
-                        self.parse_request()
-                    except ValueError:
-                        pass
-                    else:
-                        self.add_sogou_headers()
-                        self.read_buffer = self.request_line + "\r\n" + str(self.headers) + "\r\n\r\n"
-                        self.is_authed = True
-                        if not self.other or not self.other.connected:
-                            try:
-                                self.other = ProxyClient(self)
-                            except socket.error, e:
-                                return self.send_error(502, "Failed to connect: %r" % e)
-                        self._buffer = self.http_content
-                        self.content_length = int(self.headers.get("Content-Length", "0"), 10)
-                if self.is_authed and self.content_length <= len(self._buffer):
-                    self.read_buffer += self._buffer[:self.content_length]
-                    self._buffer = self._buffer[self.content_length:]
+                self.unauth_buffer += data
+                if not self.is_authed and self.parse_request():
+                    self.add_sogou_headers()
+                    self.read_buffer = self.request_line + "\r\n" + str(self.headers) + "\r\n\r\n"
+                    self.is_authed = True
+                    if not self.other or not self.other.connected:
+                        try:
+                            self.other = ProxyClient(self)
+                        except socket.error as e:
+                            return self.send_error(httplib.BAD_GATEWAY, "Failed to connect: %r" % e)
+                    self.unauth_buffer = self.http_content
+                    self.content_length = int(self.headers.get("Content-Length", 0))
+                if self.is_authed and self.content_length <= len(self.unauth_buffer):
+                    self.read_buffer += self.unauth_buffer[:self.content_length]
+                    self.unauth_buffer = self.unauth_buffer[self.content_length:]
                     if self.method != "CONNECT":
                         self.is_authed = False
                     else:
                         self.complete_request = True
         else:
-            if self._buffer:
-                self.read_buffer += self._buffer
+            if self.unauth_buffer:
+                self.read_buffer += self.unauth_buffer
             self.handle_close()
 
 
-class ProxyServer(FixedDispatcher):
+class ProxyServer(LoggerDispatcher):
     def __init__(self, host, port, request_queue_size=5):
         asyncore.dispatcher.__init__(self)
         self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -353,8 +359,9 @@ class ProxyServer(FixedDispatcher):
 
 
 class Config(object):
+    _socket_backup = None
+
     def __init__(self):
-        self._socket_backup = None
         self._cp = ConfigParser.RawConfigParser()
 
     def read(self, path):
@@ -396,10 +403,9 @@ config = Config()
 
 def main():
     setup_logger()
+    patch_asyncore_epoll()
 
     config.read("%s.ini" % os.path.splitext(__file__)[0])
-
-    patch_asyncore_epoll()
 
     SIGHUP = getattr(signal, "SIGHUP", None) # Windows does not have SIGHUP.
     if SIGHUP is not None:
