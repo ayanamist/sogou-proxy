@@ -187,6 +187,10 @@ class LoggerDispatcher(object, asyncore.dispatcher):
 
 
 class ReadWriteDispatcher(LoggerDispatcher):
+    read_buffer = ""
+    write_buffer = ""
+    writing = False
+
     def writable(self):
         return bool(self.write_buffer)
 
@@ -213,7 +217,6 @@ class ReadWriteDispatcher(LoggerDispatcher):
 class ProxyClient(ReadWriteDispatcher):
     def __init__(self, other):
         self.traffic_received = False
-        self.writing = False
         self.other = other
 
         asyncore.dispatcher.__init__(self)
@@ -259,10 +262,7 @@ class ProxyClient(ReadWriteDispatcher):
 
 class ProxyHandler(ReadWriteDispatcher):
     def __init__(self, sock):
-        self.writing = False
         self.unauth_buffer = ""
-        self.read_buffer = ""
-        self.write_buffer = ""
         self.other = None
         self.is_authed = False
         self.complete_request = False
@@ -299,7 +299,7 @@ class ProxyHandler(ReadWriteDispatcher):
         else:
             response_dict["message"] = message
         response_dict["content_length"] = len(response_dict["message"])
-        self.write_buffer = "HTTP/1.0 %(status_code)d %(status_message)s\r\nContent-Type: text/html\r\nContent-Length: %(content_length)d\r\n\r\n%(message)s" % response_dict
+        self.write_buffer = "HTTP/1.0 %(status_code)d %(status_message)s\r\nContent-Type: text/plain\r\nContent-Length: %(content_length)d\r\n\r\n%(message)s" % response_dict
         self.handle_close()
 
     def add_sogou_headers(self):
