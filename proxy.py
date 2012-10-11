@@ -41,6 +41,10 @@ SERVER_TYPES = [
     ("dxt", 3),
 ]
 
+NO_RECEIVED_DATA = 0
+RECEIVED_DATA = 1
+HEADERS_FOUND = 2
+
 logger = logging.getLogger(__name__)
 
 def setup_logger():
@@ -190,6 +194,8 @@ class ReadWriteDispatcher(LoggerDispatcher):
     read_buffer = ""
     write_buffer = ""
     writing = False
+    other = None
+    _handle_status = NO_RECEIVED_DATA
 
     def writable(self):
         return bool(self.write_buffer)
@@ -216,7 +222,6 @@ class ReadWriteDispatcher(LoggerDispatcher):
 
 class ProxyClient(ReadWriteDispatcher):
     def __init__(self, other):
-        self.traffic_received = False
         self.other = other
 
         asyncore.dispatcher.__init__(self)
@@ -251,41 +256,38 @@ class ProxyClient(ReadWriteDispatcher):
     def handle_read(self):
         data = self.recv(BUFFER_SIZE)
         if data:
-            self.traffic_received = True
+            self._handle_status = RECEIVED_DATA
             self.read_buffer += data
         else:
-            if not self.traffic_received:
+            if self._handle_status == NO_RECEIVED_DATA:
                 self.other.send_error(502, "No data received")
             else:
                 self.handle_close()
 
 
 class ProxyHandler(ReadWriteDispatcher):
-    def __init__(self, sock):
-        self.unauth_buffer = ""
-        self.other = None
-        self.is_authed = False
-        self.complete_request = False
-        self.content_length = 0
+    _content_remain_length = 0
+    _unhandled_buffer = ""
 
+    def __init__(self, sock):
         asyncore.dispatcher.__init__(self, sock)
         self.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
 
     def parse_request(self):
-        headers_end = self.unauth_buffer.rfind("\r\n\r\n")
+        headers_end = self._unhandled_buffer.rfind("\r\n\r\n")
         if headers_end >= 0:
-            headers_start = self.unauth_buffer.find("\r\n") + 2
+            headers_start = self._unhandled_buffer.find("\r\n") + 2
             if headers_start >= 0:
-                self.request_line = self.unauth_buffer[:headers_start-2]
+                self.request_line = self._unhandled_buffer[:headers_start-2]
                 self.method = self.request_line.split(" ")[0].upper()
-                self.headers = SimpleHTTPHeaders(self.unauth_buffer[headers_start:headers_end])
+                self.headers = SimpleHTTPHeaders(self._unhandled_buffer[headers_start:headers_end])
                 header_host = self.headers.get("Host")
                 if header_host is None:
-                    http_line = self.unauth_buffer[:headers_end-2]
+                    http_line = self._unhandled_buffer[:headers_end-2]
                     url = http_line.split(" ")[1]
                     header_host = urlparse.urlparse(url).netloc.split(":")[0]
                     self.headers["Host"] = header_host
-                self.http_content = self.unauth_buffer[headers_end+4:]
+                self._unhandled_buffer = self._unhandled_buffer[headers_end+4:]
                 return True
         return False
 
@@ -302,41 +304,52 @@ class ProxyHandler(ReadWriteDispatcher):
         self.write_buffer = "HTTP/1.0 %(status_code)d %(status_message)s\r\nContent-Type: text/plain\r\nContent-Length: %(content_length)d\r\n\r\n%(message)s" % response_dict
         self.handle_close()
 
+    def handle_read(self):
+        data = self.recv(BUFFER_SIZE)
+        if data:
+            self._unhandled_buffer += data
+        if self._handle_status < HEADERS_FOUND:
+            if self.parse_request():
+                self._handle_status = HEADERS_FOUND
+                meth = getattr(self, "handle_http_request", None)
+                if meth:
+                    meth()
+                self.read_buffer += "%s\r\n%s\r\n\r\n" % (self.request_line, str(self.headers))
+                if "Content-Length" in self.headers:
+                    self._content_remain_length = int(self.headers["Content-Length"])
+        if self._handle_status == HEADERS_FOUND:
+            if self._content_remain_length > 0:
+                _unhandled_buffer_length = len(self._unhandled_buffer)
+                self.read_buffer += self._unhandled_buffer[:self._content_remain_length]
+                self._unhandled_buffer = self._unhandled_buffer[self._content_remain_length:]
+                if _unhandled_buffer_length > self._content_remain_length:
+                    self._content_remain_length = 0
+                else:
+                    self._content_remain_length -= _unhandled_buffer_length
+            if self._content_remain_length <= 0:
+                if self.method == "CONNECT":
+                    self.read_buffer += self._unhandled_buffer
+                    self._unhandled_buffer = ""
+                else:
+                    self._handle_status = RECEIVED_DATA
+        if not data:
+            return self.handle_close()
+
+
+class SogouHandler(ProxyHandler):
     def add_sogou_headers(self):
         sogou_timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
         self.headers["X-Sogou-Auth"] = X_SOGOU_AUTH
         self.headers["X-Sogou-Timestamp"] = sogou_timestamp
         self.headers["X-Sogou-Tag"] = calc_sogou_hash(sogou_timestamp, self.headers["Host"])
 
-    def handle_read(self):
-        data = self.recv(BUFFER_SIZE)
-        if data:
-            if self.complete_request:
-                self.read_buffer += data
-            else:
-                self.unauth_buffer += data
-                if not self.is_authed and self.parse_request():
-                    self.add_sogou_headers()
-                    self.read_buffer = self.request_line + "\r\n" + str(self.headers) + "\r\n\r\n"
-                    self.is_authed = True
-                    if not self.other or not self.other.connected:
-                        try:
-                            self.other = ProxyClient(self)
-                        except socket.error as e:
-                            return self.send_error(httplib.BAD_GATEWAY, "Failed to connect: %r" % e)
-                    self.unauth_buffer = self.http_content
-                    self.content_length = int(self.headers.get("Content-Length", 0))
-                if self.is_authed and self.content_length <= len(self.unauth_buffer):
-                    self.read_buffer += self.unauth_buffer[:self.content_length]
-                    self.unauth_buffer = self.unauth_buffer[self.content_length:]
-                    if self.method != "CONNECT":
-                        self.is_authed = False
-                    else:
-                        self.complete_request = True
-        else:
-            if self.unauth_buffer:
-                self.read_buffer += self.unauth_buffer
-            self.handle_close()
+    def handle_http_request(self):
+        self.add_sogou_headers()
+        if not self.other or not self.other.connected:
+            try:
+                self.other = ProxyClient(self)
+            except socket.error as e:
+                return self.send_error(httplib.BAD_GATEWAY, "Failed to connect: %r" % e)
 
 
 class ProxyServer(LoggerDispatcher):
@@ -352,7 +365,7 @@ class ProxyServer(LoggerDispatcher):
         pair = self.accept()
         if pair is not None:
             sock, addr = pair
-            ProxyHandler(sock)
+            SogouHandler(sock)
 
     def serve_forever(self):
         asyncore.loop(use_poll=True)
