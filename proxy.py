@@ -20,16 +20,13 @@ __maintainer__ = "ayanamist"
 __email__ = "ayanamist@gmail.com"
 
 import asyncore
-import httplib
 import logging
 import os
-import random
 import select
 import signal
 import socket
 import struct
 import time
-import urlparse
 import ConfigParser
 
 X_SOGOU_AUTH = "9CD285F1E7ADB0BD403C22AD1D545F40/30/853edc6d49ba4e27"
@@ -61,6 +58,8 @@ def setup_logger():
     stderr_handler.setFormatter(formatter)
     logger.addHandler(stderr_handler)
 
+def randint(max):
+    return int(ord(os.urandom(1)) / 256.0 * max)
 
 def calc_sogou_hash(timestamp, host):
     s = timestamp + host + "SogouExplorerProxy"
@@ -287,27 +286,12 @@ class ProxyHandler(ReadWriteDispatcher):
                 self.request_line = self._unhandled_buffer[:headers_start-2]
                 self.method = self.request_line.split(" ")[0].upper()
                 self.headers = SimpleHTTPHeaders(self._unhandled_buffer[headers_start:headers_end])
-                header_host = self.headers.get("Host")
-                if header_host is None:
-                    http_line = self._unhandled_buffer[:headers_end-2]
-                    url = http_line.split(" ")[1]
-                    header_host = urlparse.urlparse(url).netloc.split(":")[0]
-                    self.headers["Host"] = header_host
                 self._unhandled_buffer = self._unhandled_buffer[headers_end+4:]
                 return True
         return False
 
-    def send_error(self, code, message=None):
-        response_dict = {
-            "status_code": code,
-            "status_message": httplib.responses.get(code, "???"),
-        }
-        if message is None:
-            response_dict["message"] = response_dict["status_message"]
-        else:
-            response_dict["message"] = message
-        response_dict["content_length"] = len(response_dict["message"])
-        self.write_buffer = "HTTP/1.0 %(status_code)d %(status_message)s\r\nContent-Type: text/plain\r\nContent-Length: %(content_length)d\r\n\r\n%(message)s" % response_dict
+    def send_error(self, message):
+        self.write_buffer = "HTTP/1.0 502 Bad Gateway\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s" % (len(message), message)
         self.handle_close()
 
     def handle_read(self):
@@ -347,7 +331,7 @@ class SogouHandler(ProxyHandler):
         sogou_timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
         self.headers["X-Sogou-Auth"] = X_SOGOU_AUTH
         self.headers["X-Sogou-Timestamp"] = sogou_timestamp
-        self.headers["X-Sogou-Tag"] = calc_sogou_hash(sogou_timestamp, self.headers["Host"])
+        self.headers["X-Sogou-Tag"] = calc_sogou_hash(sogou_timestamp, self.headers.get("Host", ""))
 
     def handle_http_request(self):
         self.add_sogou_headers()
@@ -355,7 +339,7 @@ class SogouHandler(ProxyHandler):
             try:
                 self.other = ProxyClient(self)
             except socket.error as e:
-                return self.send_error(httplib.BAD_GATEWAY, "Failed to connect: %r" % e)
+                return self.send_error("Failed to connect: %r" % e)
 
 
 class ProxyServer(LoggerDispatcher):
@@ -389,7 +373,7 @@ class Config(object):
         self.listen_ip = self._cp.get("listen", "ip")
         self.listen_port = self._cp.getint("listen", "port")
         self.server_type = SERVER_TYPES[self._cp.getint("run", "type")]
-        self.sogou_host = "h%d.%s.bj.ie.sogou.com" % (random.randint(0, self.server_type[1] - 1), self.server_type[0])
+        self.sogou_host = "h%d.%s.bj.ie.sogou.com" % (randint(self.server_type[1] - 1), self.server_type[0])
         self._ip = None
         self.proxy_enabled = self._cp.getboolean("proxy", "enabled")
         self.proxy_host = self._cp.get("proxy", "host")
