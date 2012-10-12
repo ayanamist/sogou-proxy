@@ -139,6 +139,9 @@ class SimpleHTTPHeaders(dict):
     def __str__(self):
         return "\r\n".join("%s: %s" % (k.title(), v) for k, v in self.iteritems())
 
+    def __contains__(self, item):
+        return dict.__contains__(self, item.lower())
+
     def add(self, key, value):
         key = key.lower()
         if key not in self:
@@ -182,6 +185,9 @@ class SimpleHTTPHeaders(dict):
 
     def values(self):
         return list(self.itervalues())
+
+    def has_key(self, k):
+        return dict.has_key(self, k.lower())
 
 
 class LoggerDispatcher(object, asyncore.dispatcher):
