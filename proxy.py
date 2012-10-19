@@ -42,9 +42,9 @@ NO_RECEIVED_DATA = 0
 RECEIVED_DATA = 1
 HEADERS_FOUND = 2
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__ if __name__ != "__main__" else "")
 
-def setup_logger():
+def setup_logger(logger):
     logger.setLevel(logging.DEBUG)
     formatter = logging.Formatter("%(asctime)-15s %(name)-8s %(levelname)-5s %(message)s", "%m-%d %H:%M:%S")
 
@@ -64,9 +64,13 @@ def randint(max):
 def calc_sogou_hash(timestamp, host):
     s = timestamp + host + "SogouExplorerProxy"
     length = code = len(s)
-    dwords = code // 4
+    dwords = code / 4
     rest = code % 4
-    v = struct.unpack("%di%ds" % (dwords, rest), s)
+    fmt = "%di%ds" % (dwords, rest)
+    if len(s) != struct.calcsize(fmt):
+        logger.error("len(s) not equal calcsize(fmt)")
+        return ""
+    v = struct.unpack(fmt, s)
     for i in xrange(dwords):
         vv = v[i]
         a = vv & 0xFFFF
@@ -265,7 +269,7 @@ class ProxyClient(ReadWriteDispatcher):
             self.read_buffer += data
         else:
             if self._handle_status == NO_RECEIVED_DATA:
-                self.other.send_error(502, "No data received")
+                self.other.send_error("No data received")
             else:
                 self.handle_close()
 
@@ -405,7 +409,7 @@ class Config(object):
 config = Config()
 
 def main():
-    setup_logger()
+    setup_logger(logger)
     patch_asyncore_epoll()
 
     config.read("%s.ini" % os.path.splitext(__file__)[0])
