@@ -58,8 +58,10 @@ def setup_logger(logger):
     stderr_handler.setFormatter(formatter)
     logger.addHandler(stderr_handler)
 
+
 def randint(max):
     return int(ord(os.urandom(1)) / 256.0 * max)
+
 
 def calc_sogou_hash(timestamp, host):
     s = timestamp + host + "SogouExplorerProxy"
@@ -236,7 +238,7 @@ class ProxyClient(ReadWriteDispatcher):
         asyncore.dispatcher.__init__(self)
         self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
         self.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
-        self.connect((config.sogou_ip, 80))
+        self.connect((resolver.resolve(config.sogou_host), 80))
 
     def __get_read_buffer(self):
         if self.other:
@@ -287,15 +289,16 @@ class ProxyHandler(ReadWriteDispatcher):
         if headers_end >= 0:
             headers_start = self._unhandled_buffer.find("\r\n") + 2
             if headers_start >= 0:
-                self.request_line = self._unhandled_buffer[:headers_start-2]
+                self.request_line = self._unhandled_buffer[:headers_start - 2]
                 self.method = self.request_line.split(" ")[0].upper()
                 self.headers = SimpleHTTPHeaders(self._unhandled_buffer[headers_start:headers_end])
-                self._unhandled_buffer = self._unhandled_buffer[headers_end+4:]
+                self._unhandled_buffer = self._unhandled_buffer[headers_end + 4:]
                 return True
         return False
 
     def send_error(self, message):
-        self.write_buffer = "HTTP/1.0 502 Bad Gateway\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s" % (len(message), message)
+        self.write_buffer = "HTTP/1.0 502 Bad Gateway\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s" % (
+        len(message), message)
         self.handle_close()
 
     def handle_read(self):
@@ -365,6 +368,21 @@ class ProxyServer(LoggerDispatcher):
         asyncore.loop(use_poll=True)
 
 
+class Resolver(object):
+    _list = dict()
+
+    def resolve(self, hostname):
+        if hostname not in self._list:
+            try:
+                ip = socket.gethostbyname(hostname)
+            except socket.error:
+                return ""
+            else:
+                self._list[hostname] = {"ip": ip, "created_time": time.time()}
+        return self._list[hostname]["ip"]
+
+resolver = Resolver()
+
 class Config(object):
     _socket_backup = None
 
@@ -378,18 +396,11 @@ class Config(object):
         self.listen_port = self._cp.getint("listen", "port")
         self.server_type = SERVER_TYPES[self._cp.getint("run", "type")]
         self.sogou_host = "h%d.%s.bj.ie.sogou.com" % (randint(self.server_type[1] - 1), self.server_type[0])
-        self._ip = None
         self.proxy_enabled = self._cp.getboolean("proxy", "enabled")
         self.proxy_host = self._cp.get("proxy", "host")
         self.proxy_port = self._cp.getint("proxy", "port")
         self.proxy_type = self._cp.get("proxy", "type").upper()
         self.handle_proxy()
-
-    @property
-    def sogou_ip(self):
-        if not self._ip:
-            self._ip = socket.gethostbyname(self.sogou_host)
-        return self._ip
 
     def sighup_handler(self, *_):
         self.read(self._config_path)
