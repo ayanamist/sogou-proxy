@@ -152,7 +152,7 @@ class SimpleHTTPHeaders(dict):
         if key not in self:
             self[key] = value
         else:
-            self[key].append(value)
+            self.getlist(key).append(value)
 
     def get(self, k, d=None):
         try:
@@ -163,10 +163,10 @@ class SimpleHTTPHeaders(dict):
             return v
 
     def getlist(self, key):
-        return self[key.lower()]
+        return dict.__getitem__(self, key.lower())
 
     def setlist(self, key, new_list):
-        self[key.lower()] = new_list
+        dict.__setitem__(self, key.lower(), new_list)
 
     def iteritems(self):
         for k, lv in dict.iteritems(self):
@@ -285,7 +285,7 @@ class ProxyHandler(ReadWriteDispatcher):
         self.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
 
     def parse_request(self):
-        headers_end = self._unhandled_buffer.rfind("\r\n\r\n")
+        headers_end = self._unhandled_buffer.find("\r\n\r\n")
         if headers_end >= 0:
             headers_start = self._unhandled_buffer.find("\r\n") + 2
             if headers_start >= 0:
