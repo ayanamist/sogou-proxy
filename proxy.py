@@ -41,10 +41,6 @@ SERVER_TYPES = [
     ("dxt", 16),
 ]
 
-NO_RECEIVED_DATA = 0
-RECEIVED_DATA = 1
-HEADERS_FOUND = 2
-
 logger = logging.getLogger(__name__ if __name__ != "__main__" else "")
 
 dummy_cb = lambda _: None
