@@ -11,7 +11,12 @@ setup(
             "bundle_files": 1,
             "ascii": True,
             "includes": [
+                "__future__",
+                "contextlib",
+                "ctypes",
+                "ctypes.wintypes",
                 "functools",
+                "htmlentitydefs",
                 "logging",
                 "os",
                 "select",
@@ -19,6 +24,7 @@ setup(
                 "socket",
                 "struct",
                 "time",
+                "urllib",
                 "ConfigParser",
                 ],
             "excludes": [
@@ -29,7 +35,6 @@ setup(
                 "doctest",
                 "gettext",
                 "hashlib",
-                "heapq",
                 "httplib",
                 "inspect",
                 "locale",
@@ -40,7 +45,6 @@ setup(
                 "ssl",
                 "subprocess",
                 "tempfile",
-                "threading",
                 "tokenize",
                 "unittest",
             ]
