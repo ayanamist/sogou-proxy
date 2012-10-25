@@ -27,7 +27,6 @@ import struct
 import time
 import ConfigParser
 
-from tornado import gen
 from tornado import httputil
 from tornado import ioloop
 from tornado import iostream
@@ -110,7 +109,6 @@ class ProxyHandler(iostream.IOStream):
     def wait_for_data(self):
         self.read_until("\r\n\r\n", self.on_headers)
 
-    @gen.engine
     def on_headers(self, data):
         http_line, headers_str = data.split("\r\n", 1)
         http_method = http_line.split(" ", 1)[0].upper()
@@ -122,7 +120,7 @@ class ProxyHandler(iostream.IOStream):
         self.set_close_callback(functools.partial(on_close, remote))
         remote.set_close_callback(functools.partial(on_close, self))
 
-        yield gen.Task(remote.connect((resolver.resolve(config.sogou_host), 80)))
+        remote.connect((resolver.resolve(config.sogou_host), 80))
 
         timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
         remote.write("%s\r\n%s%s" % (
@@ -134,7 +132,7 @@ class ProxyHandler(iostream.IOStream):
             ))
 
         if http_method != "CONNECT":
-            self.read_bytes(int(headers["Content-Length"]), callback=dummy_cb, streaming_callback=remote.write)
+            self.read_bytes(int(headers.get("Content-Length", 0)), callback=dummy_cb, streaming_callback=remote.write)
             self.wait_for_data()
         else:
             self.read_until_close(callback=dummy_cb, streaming_callback=remote.write)
