@@ -11,38 +11,47 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
 __author__ = "ayanamist"
 __copyright__ = "Copyright 2012"
 __license__ = "GPL"
-__version__ = "1.0"
+__version__ = "2.0"
 __maintainer__ = "ayanamist"
 __email__ = "ayanamist@gmail.com"
 
-import asyncore
+import functools
 import logging
 import os
-import select
 import signal
 import socket
 import struct
 import time
 import ConfigParser
 
+try:
+    import tornado_pyuv
+except ImportError:
+    pass
+else:
+    tornado_pyuv.install()
+
+from tornado import httputil
+from tornado import ioloop
+from tornado import iostream
+from tornado import netutil
+
 X_SOGOU_AUTH = "9CD285F1E7ADB0BD403C22AD1D545F40/30/853edc6d49ba4e27"
-BUFFER_SIZE = 65536
 SERVER_TYPES = [
     ("edu", 16),
-    ("ctc", 3),
-    ("cnc", 3),
-    ("dxt", 3),
+    ("ctc", 4),
+    ("cnc", 4),
+    ("dxt", 16),
 ]
 
-NO_RECEIVED_DATA = 0
-RECEIVED_DATA = 1
-HEADERS_FOUND = 2
-
 logger = logging.getLogger(__name__ if __name__ != "__main__" else "")
+
+dummy_cb = lambda _: None
+on_close = lambda stream: stream.close() if not stream.closed() else None
+randint = lambda min, max: min + int(ord(os.urandom(1)) / 256.0 * max)
 
 def setup_logger(logger):
     logger.setLevel(logging.DEBUG)
@@ -59,327 +68,104 @@ def setup_logger(logger):
     logger.addHandler(stderr_handler)
 
 
-def randint(max):
-    return int(ord(os.urandom(1)) / 256.0 * max)
-
-
 def calc_sogou_hash(timestamp, host):
     s = timestamp + host + "SogouExplorerProxy"
     length = code = len(s)
     dwords = code / 4
     rest = code % 4
     fmt = "%di%ds" % (dwords, rest)
-    if len(s) != struct.calcsize(fmt):
-        logger.error("len(s) not equal calcsize(fmt)")
-        return ""
     v = struct.unpack(fmt, s)
     for i in xrange(dwords):
         vv = v[i]
-        a = vv & 0xFFFF
+        a = vv & 0xffff
         b = vv >> 16
         code += a
-        code ^= ((code << 5) ^ b) << 0xb
+        code ^= ((code << 5) ^ b) << 11
         # To avoid overflows
         code &= 0xffffffff
-        code += code >> 0xb
+        code += code >> 11
     if rest == 3:
         code += ord(s[length - 2]) * 256 + ord(s[length - 3])
-        code ^= (code ^ (ord(s[length - 1]) * 4)) << 0x10
+        code ^= (code ^ (ord(s[length - 1]) * 4)) << 16
         code &= 0xffffffff
-        code += code >> 0xb
+        code += code >> 11
     elif rest == 2:
         code += ord(s[length - 1]) * 256 + ord(s[length - 2])
-        code ^= code << 0xb
+        code ^= code << 11
         code &= 0xffffffff
-        code += code >> 0x11
+        code += code >> 17
     elif rest == 1:
         code += ord(s[length - 1])
-        code ^= code << 0xa
+        code ^= code << 10
         code &= 0xffffffff
-        code += code >> 0x1
+        code += code >> 1
     code ^= code * 8
     code &= 0xffffffff
     code += code >> 5
     code ^= code << 4
     code &= 0xffffffff
-    code += code >> 0x11
-    code ^= code << 0x19
+    code += code >> 17
+    code ^= code << 25
     code &= 0xffffffff
     code += code >> 6
     code &= 0xffffffff
     return hex(code)[2:].rstrip("L").zfill(8)
 
 
-def patch_asyncore_epoll():
-    epoll = getattr(select, "epoll", None)
-    if epoll:
-        select.poll = epoll
-        select.POLLIN = select.EPOLLIN
-        select.POLLOUT = select.EPOLLOUT
-        select.POLLPRI = select.EPOLLPRI
-        select.POLLERR = select.EPOLLERR
-        select.POLLHUP = select.EPOLLHUP
+class ProxyHandler(iostream.IOStream):
+    def wait_for_data(self):
+        self.read_until("\r\n\r\n", self.on_headers)
 
+    def on_headers(self, data):
+        http_line, headers_str = data.split("\r\n", 1)
+        http_method = http_line.split(" ", 1)[0].upper()
+        headers = httputil.HTTPHeaders.parse(headers_str)
 
-class SimpleHTTPHeaders(dict):
-    def __init__(self, s):
-        dict.__init__(self)
-        for line in s.split("\r\n"):
-            k, v = line.split(":", 1)
-            k = k.rstrip()
-            v = v.lstrip()
-            self.add(k, v)
+        remote = iostream.IOStream(socket.socket())
+        remote.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
 
-    def __setitem__(self, key, value):
-        # Python bug: we should first use None to create this key,
-        # otherwise dict object will extract the only value of the list.
-        key = key.lower()
-        dict.__setitem__(self, key, None)
-        dict.__setitem__(self, key, [value])
+        self.set_close_callback(functools.partial(on_close, remote))
+        remote.set_close_callback(functools.partial(on_close, self))
 
-    def __getitem__(self, key):
-        value = dict.__getitem__(self, key.lower())
-        return value[0]
+        remote.connect((resolver.resolve(config.sogou_host), 80))
 
-    def __str__(self):
-        return "\r\n".join("%s: %s" % (k.title(), v) for k, v in self.iteritems())
+        timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
+        remote.write("%s\r\n%s%s" % (
+            http_line,
+            "X-Sogou-Auth: %s\r\nX-Sogou-Timestamp: %s\r\nX-Sogou-Tag: %s\r\n" % (
+                X_SOGOU_AUTH, timestamp, calc_sogou_hash(timestamp, headers.get("Host", ""))
+                ),
+            headers_str,
+            ))
 
-    def __contains__(self, item):
-        return dict.__contains__(self, item.lower())
-
-    def add(self, key, value):
-        key = key.lower()
-        if key not in self:
-            self[key] = value
+        if http_method != "CONNECT":
+            self.read_bytes(int(headers.get("Content-Length", 0)), callback=dummy_cb, streaming_callback=remote.write)
+            self.wait_for_data()
         else:
-            self.getlist(key).append(value)
+            self.read_until_close(callback=dummy_cb, streaming_callback=remote.write)
 
-    def get(self, k, d=None):
-        try:
-            v = self[k.lower()]
-        except KeyError:
-            return d
-        else:
-            return v
-
-    def getlist(self, key):
-        return dict.__getitem__(self, key.lower())
-
-    def setlist(self, key, new_list):
-        dict.__setitem__(self, key.lower(), new_list)
-
-    def iteritems(self):
-        for k, lv in dict.iteritems(self):
-            for v in lv:
-                yield k.title(), v
-
-    def items(self):
-        return list(self.iteritems())
-
-    def iterkeys(self):
-        for k in dict.iterkeys(self):
-            yield k.title()
-
-    def keys(self):
-        return list(self.iterkeys())
-
-    def itervalues(self):
-        for lv in dict.itervalues(self):
-            for v in lv:
-                yield v
-
-    def values(self):
-        return list(self.itervalues())
-
-    def has_key(self, k):
-        return dict.has_key(self, k.lower())
+        remote.read_until_close(callback=dummy_cb, streaming_callback=self.write)
 
 
-class LoggerDispatcher(object, asyncore.dispatcher):
-    def handle_error(self):
-        logger.exception("Error")
-        self.handle_close()
-
-
-class ReadWriteDispatcher(LoggerDispatcher):
-    read_buffer = ""
-    write_buffer = ""
-    writing = False
-    other = None
-    _handle_status = NO_RECEIVED_DATA
-
-    def writable(self):
-        return bool(self.write_buffer)
-
-    def handle_write(self):
-        if self.writable():
-            self.writing = True
-            sent = self.send(self.write_buffer)
-            if sent:
-                self.writing = False
-                self.write_buffer = self.write_buffer[sent:]
-            else:
-                self.handle_close()
-
-    def handle_close(self):
-        self.closing = True
-        if not self.writing:
-            while self.writable() and self.handle_write() > 0:
-                pass
-        if self.other and not self.other.closing:
-            self.other.handle_close()
-        self.close()
-
-
-class ProxyClient(ReadWriteDispatcher):
-    def __init__(self, other):
-        self.other = other
-
-        asyncore.dispatcher.__init__(self)
-        self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
-        self.connect((resolver.resolve(config.sogou_host), 80))
-
-    def __get_read_buffer(self):
-        if self.other:
-            return self.other.write_buffer
-        elif not self.closing:
-            self.handle_close()
-            return ""
-
-    def __set_read_buffer(self, value):
-        self.other.write_buffer = value
-
-    read_buffer = property(__get_read_buffer, __set_read_buffer)
-
-    def __get_write_buffer(self):
-        if self.other:
-            return self.other.read_buffer
-        elif not self.closing:
-            self.handle_close()
-            return ""
-
-    def __set_write_buffer(self, value):
-        self.other.read_buffer = value
-
-    write_buffer = property(__get_write_buffer, __set_write_buffer)
-
-    def handle_read(self):
-        data = self.recv(BUFFER_SIZE)
-        if data:
-            self._handle_status = RECEIVED_DATA
-            self.read_buffer += data
-        else:
-            if self._handle_status == NO_RECEIVED_DATA:
-                self.other.send_error("No data received")
-            else:
-                self.handle_close()
-
-
-class ProxyHandler(ReadWriteDispatcher):
-    _content_remain_length = 0
-    _unhandled_buffer = ""
-
-    def __init__(self, sock):
-        asyncore.dispatcher.__init__(self, sock)
-        self.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
-
-    def parse_request(self):
-        headers_end = self._unhandled_buffer.find("\r\n\r\n")
-        if headers_end >= 0:
-            headers_start = self._unhandled_buffer.find("\r\n") + 2
-            if headers_start >= 0:
-                self.request_line = self._unhandled_buffer[:headers_start - 2]
-                self.method = self.request_line.split(" ")[0].upper()
-                self.headers = SimpleHTTPHeaders(self._unhandled_buffer[headers_start:headers_end])
-                self._unhandled_buffer = self._unhandled_buffer[headers_end + 4:]
-                return True
-        return False
-
-    def send_error(self, message):
-        self.write_buffer = "HTTP/1.0 502 Bad Gateway\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s" % (
-        len(message), message)
-        self.handle_close()
-
-    def handle_read(self):
-        data = self.recv(BUFFER_SIZE)
-        if data:
-            self._unhandled_buffer += data
-        if self._handle_status < HEADERS_FOUND:
-            if self.parse_request():
-                self._handle_status = HEADERS_FOUND
-                meth = getattr(self, "handle_http_request", None)
-                if meth:
-                    meth()
-                self.read_buffer += "%s\r\n%s\r\n\r\n" % (self.request_line, str(self.headers))
-                if "Content-Length" in self.headers:
-                    self._content_remain_length = int(self.headers["Content-Length"])
-        if self._handle_status == HEADERS_FOUND:
-            if self._content_remain_length > 0:
-                _unhandled_buffer_length = len(self._unhandled_buffer)
-                self.read_buffer += self._unhandled_buffer[:self._content_remain_length]
-                self._unhandled_buffer = self._unhandled_buffer[self._content_remain_length:]
-                if _unhandled_buffer_length > self._content_remain_length:
-                    self._content_remain_length = 0
-                else:
-                    self._content_remain_length -= _unhandled_buffer_length
-            if self._content_remain_length <= 0:
-                if self.method == "CONNECT":
-                    self.read_buffer += self._unhandled_buffer
-                    self._unhandled_buffer = ""
-                else:
-                    self._handle_status = RECEIVED_DATA
-        if not data:
-            return self.handle_close()
-
-
-class SogouHandler(ProxyHandler):
-    def add_sogou_headers(self):
-        sogou_timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
-        self.headers["X-Sogou-Auth"] = X_SOGOU_AUTH
-        self.headers["X-Sogou-Timestamp"] = sogou_timestamp
-        self.headers["X-Sogou-Tag"] = calc_sogou_hash(sogou_timestamp, self.headers.get("Host", ""))
-
-    def handle_http_request(self):
-        self.add_sogou_headers()
-        if not self.other or not self.other.connected:
-            try:
-                self.other = ProxyClient(self)
-            except socket.error as e:
-                return self.send_error("Failed to connect: %r" % e)
-
-
-class ProxyServer(LoggerDispatcher):
-    def __init__(self, host, port, request_queue_size=5):
-        asyncore.dispatcher.__init__(self)
-        self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
-        self.set_reuse_addr()
-        self.bind((host, port))
-        self.listen(request_queue_size)
-
-    def handle_accept(self):
-        pair = self.accept()
-        if pair is not None:
-            sock, addr = pair
-            SogouHandler(sock)
-
-    def serve_forever(self):
-        asyncore.loop(use_poll=True)
+class ProxyServer(netutil.TCPServer):
+    def handle_stream(self, stream, address):
+        sock = stream.socket
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
+        ProxyHandler(sock).wait_for_data()
 
 
 class Resolver(object):
-    _list = dict()
+    _cache = dict()
 
     def resolve(self, hostname):
-        if hostname not in self._list:
+        if hostname not in self._cache:
             try:
                 ip = socket.gethostbyname(hostname)
             except socket.error:
                 return ""
             else:
-                self._list[hostname] = {"ip": ip, "created_time": time.time()}
-        return self._list[hostname]["ip"]
+                self._cache[hostname] = {"ip": ip, "created_time": time.time()}
+        return self._cache[hostname]["ip"]
 
 resolver = Resolver()
 
@@ -395,7 +181,7 @@ class Config(object):
         self.listen_ip = self._cp.get("listen", "ip")
         self.listen_port = self._cp.getint("listen", "port")
         self.server_type = SERVER_TYPES[self._cp.getint("run", "type")]
-        self.sogou_host = "h%d.%s.bj.ie.sogou.com" % (randint(self.server_type[1] - 1), self.server_type[0])
+        self.sogou_host = "h%d.%s.bj.ie.sogou.com" % (randint(0, self.server_type[1] - 1), self.server_type[0])
         self.proxy_enabled = self._cp.getboolean("proxy", "enabled")
         self.proxy_host = self._cp.get("proxy", "host")
         self.proxy_port = self._cp.getint("proxy", "port")
@@ -413,15 +199,14 @@ class Config(object):
 
             proxy_type = getattr(socks, "PROXY_TYPE_" + self.proxy_type)
             socks.setdefaultproxy(proxy_type, self.proxy_host, self.proxy_port)
-            socks.wrapmodule(asyncore)
+            socket.socket = socks.socksocket
         else:
-            asyncore.socket.socket = self._socket_backup
+            socket.socket = self._socket_backup
 
 config = Config()
 
 def main():
     setup_logger(logger)
-    patch_asyncore_epoll()
 
     config.read("%s.ini" % os.path.splitext(__file__)[0])
 
@@ -430,7 +215,8 @@ def main():
         signal.signal(SIGHUP, config.sighup_handler)
 
     print "Running on %s\nListening on %s:%d" % (config.sogou_host, config.listen_ip, config.listen_port)
-    ProxyServer(config.listen_ip, config.listen_port).serve_forever()
+    ProxyServer().listen(config.listen_port, config.listen_ip)
+    ioloop.IOLoop.instance().start()
 
 if __name__ == "__main__":
     main()
