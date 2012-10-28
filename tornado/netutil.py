@@ -24,7 +24,6 @@ import os
 import socket
 import stat
 
-from tornado import process
 from tornado.ioloop import IOLoop
 from tornado.iostream import IOStream, SSLIOStream
 from tornado.platform.auto import set_close_exec
@@ -168,7 +167,7 @@ class TCPServer(object):
         else:
             self._pending_sockets.extend(sockets)
 
-    def start(self, num_processes=1):
+    def start(self):
         """Starts this server in the IOLoop.
 
         By default, we run the server in this process and do not fork any
@@ -189,8 +188,6 @@ class TCPServer(object):
         """
         assert not self._started
         self._started = True
-        if num_processes != 1:
-            process.fork_processes(num_processes)
         sockets = self._pending_sockets
         self._pending_sockets = []
         self.add_sockets(sockets)
