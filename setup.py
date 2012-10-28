@@ -15,7 +15,6 @@ setup(
                 "contextlib",
                 "ctypes",
                 "ctypes.wintypes",
-                "htmlentitydefs",
                 "logging",
                 "os",
                 "select",
@@ -23,7 +22,6 @@ setup(
                 "socket",
                 "struct",
                 "time",
-                "urllib",
                 "ConfigParser",
                 ],
             "excludes": [
