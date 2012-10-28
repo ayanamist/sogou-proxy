@@ -41,9 +41,14 @@ SERVER_TYPES = [
 
 logger = logging.getLogger(__name__ if __name__ != "__main__" else "")
 
-dummy_cb = lambda _: None
-on_close = lambda stream: stream.close() if not stream.closed() else None
-randint = lambda min, max: min + int(ord(os.urandom(1)) / 256.0 * max)
+def on_close(stream):
+    if not stream.closed():
+        stream.close()
+
+
+def randint(min, max):
+    return min + int(ord(os.urandom(1)) / 256.0 * max)
+
 
 def safe_write_cb(func):
     def wrapped(data):
@@ -51,21 +56,6 @@ def safe_write_cb(func):
             func(data)
 
     return wrapped
-
-
-def setup_logger(logger):
-    logger.setLevel(logging.DEBUG)
-    formatter = logging.Formatter("%(asctime)-15s %(name)-8s %(levelname)-5s %(message)s", "%m-%d %H:%M:%S")
-
-    file_handler = logging.FileHandler("%s.log" % os.path.splitext(__file__)[0])
-    file_handler.setLevel(logging.ERROR)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-
-    stderr_handler = logging.StreamHandler()
-    stderr_handler.setLevel(logging.DEBUG)
-    stderr_handler.setFormatter(formatter)
-    logger.addHandler(stderr_handler)
 
 
 def calc_sogou_hash(timestamp, host):
@@ -210,6 +200,21 @@ class Config(object):
 
 config = Config()
 
+def setup_logger(logger):
+    logger.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("%(asctime)-15s %(name)-8s %(levelname)-5s %(message)s", "%m-%d %H:%M:%S")
+
+    file_handler = logging.FileHandler("%s.log" % os.path.splitext(__file__)[0])
+    file_handler.setLevel(logging.ERROR)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    stderr_handler = logging.StreamHandler()
+    stderr_handler.setLevel(logging.DEBUG)
+    stderr_handler.setFormatter(formatter)
+    logger.addHandler(stderr_handler)
+
+
 def main():
     setup_logger(logger)
 
@@ -219,7 +224,8 @@ def main():
     if SIGHUP is not None:
         signal.signal(SIGHUP, config.sighup_handler)
 
-    print "Running on %s\nListening on %s:%d" % (config.sogou_host, config.listen_ip, config.listen_port)
+    logger.info("Running on %s\nListening on %s:%d" % (config.sogou_host, config.listen_ip, config.listen_port))
+
     ProxyServer().listen(config.listen_port, config.listen_ip)
     ioloop.IOLoop.instance().start()
 
