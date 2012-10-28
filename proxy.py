@@ -25,6 +25,7 @@ import socket
 import struct
 import time
 import ConfigParser
+from os import path
 
 from tornado import httputil
 from tornado import ioloop
@@ -202,7 +203,7 @@ def setup_logger(logger):
     logger.setLevel(logging.DEBUG)
     formatter = logging.Formatter("%(asctime)-15s %(name)-8s %(levelname)-5s %(message)s", "%m-%d %H:%M:%S")
 
-    file_handler = logging.FileHandler("%s.log" % os.path.splitext(__file__)[0])
+    file_handler = logging.FileHandler("%s.log" % path.splitext(__file__)[0])
     file_handler.setLevel(logging.ERROR)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
@@ -216,7 +217,7 @@ def setup_logger(logger):
 def main():
     setup_logger(logger)
 
-    config.read("%s.ini" % os.path.splitext(__file__)[0])
+    config.read("%s.ini" % path.splitext(__file__)[0])
 
     SIGHUP = getattr(signal, "SIGHUP", None) # Windows does not have SIGHUP.
     if SIGHUP is not None:
