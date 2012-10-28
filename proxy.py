@@ -50,14 +50,6 @@ def randint(min, max):
     return min + int(ord(os.urandom(1)) / 256.0 * max)
 
 
-def safe_write_cb(func):
-    def wrapped(data):
-        if data:
-            func(data)
-
-    return wrapped
-
-
 def calc_sogou_hash(timestamp, host):
     s = timestamp + host + "SogouExplorerProxy"
     length = code = len(s)
@@ -102,7 +94,15 @@ def calc_sogou_hash(timestamp, host):
     return hex(code)[2:].rstrip("L").zfill(8)
 
 
-class ProxyHandler(iostream.IOStream):
+class SafeWriteIOStream(iostream.IOStream):
+    # Because sometimes callback will be passed with non-empty data,
+    # even streaming_callback is set. This behavior does not conform to documentation.
+    def write(self, data, callback=None):
+        if data and not self.closed():
+            super(SafeWriteIOStream, self).write(data, callback=callback)
+
+
+class ProxyHandler(SafeWriteIOStream):
     def wait_for_data(self):
         self.read_until("\r\n\r\n", self.on_headers)
 
@@ -111,7 +111,7 @@ class ProxyHandler(iostream.IOStream):
         http_method = http_line.split(" ", 1)[0].upper()
         headers = httputil.HTTPHeaders.parse(headers_str)
 
-        remote = iostream.IOStream(socket.socket())
+        remote = SafeWriteIOStream(socket.socket())
         remote.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
 
         self.set_close_callback(lambda: on_close(remote))
@@ -131,15 +131,13 @@ class ProxyHandler(iostream.IOStream):
         if http_method != "CONNECT":
             content_length = int(headers.get("Content-Length", 0))
             if content_length:
-                self.read_bytes(content_length, callback=safe_write_cb(remote.write),
-                    streaming_callback=safe_write_cb(remote.write))
+                self.read_bytes(content_length, callback=remote.write,
+                    streaming_callback=remote.write)
             self.wait_for_data()
         else:
-            self.read_until_close(callback=safe_write_cb(remote.write), streaming_callback=safe_write_cb(remote.write))
+            self.read_until_close(callback=remote.write, streaming_callback=remote.write)
 
-        remote.read_until_close(callback=safe_write_cb(self.write), streaming_callback=safe_write_cb(self.write))
-        # Above codes are using safe_write_cb wrapper, because sometimes callback will be passed with non-empty data,
-        # even streaming_callback is set. This behavior does not conform to documentation.
+        remote.read_until_close(callback=self.write, streaming_callback=self.write)
 
 
 class ProxyServer(netutil.TCPServer):
@@ -224,7 +222,8 @@ def main():
     if SIGHUP is not None:
         signal.signal(SIGHUP, config.sighup_handler)
 
-    logger.info("Running on %s\nListening on %s:%d" % (config.sogou_host, config.listen_ip, config.listen_port))
+    logger.info("Running on %s" % config.sogou_host)
+    logger.info("Listening on %s:%d" % (config.listen_ip, config.listen_port))
 
     ProxyServer().listen(config.listen_port, config.listen_ip)
     ioloop.IOLoop.instance().start()
