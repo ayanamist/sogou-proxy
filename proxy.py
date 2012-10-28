@@ -27,13 +27,6 @@ import struct
 import time
 import ConfigParser
 
-try:
-    import tornado_pyuv
-except ImportError:
-    pass
-else:
-    tornado_pyuv.install()
-
 from tornado import httputil
 from tornado import ioloop
 from tornado import iostream
