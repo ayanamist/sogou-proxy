@@ -18,7 +18,6 @@ __version__ = "2.0"
 __maintainer__ = "ayanamist"
 __email__ = "ayanamist@gmail.com"
 
-import functools
 import logging
 import os
 import signal
@@ -50,7 +49,9 @@ def safe_write_cb(func):
     def wrapped(data):
         if data:
             func(data)
+
     return wrapped
+
 
 def setup_logger(logger):
     logger.setLevel(logging.DEBUG)
@@ -123,8 +124,8 @@ class ProxyHandler(iostream.IOStream):
         remote = iostream.IOStream(socket.socket())
         remote.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
 
-        self.set_close_callback(functools.partial(on_close, remote))
-        remote.set_close_callback(functools.partial(on_close, self))
+        self.set_close_callback(lambda: on_close(remote))
+        remote.set_close_callback(lambda: on_close(self))
 
         remote.connect((resolver.resolve(config.sogou_host), 80))
 
@@ -149,6 +150,7 @@ class ProxyHandler(iostream.IOStream):
         remote.read_until_close(callback=safe_write_cb(self.write), streaming_callback=safe_write_cb(self.write))
         # Above codes are using safe_write_cb wrapper, because sometimes callback will be passed with non-empty data,
         # even streaming_callback is set. This behavior does not conform to documentation.
+
 
 class ProxyServer(netutil.TCPServer):
     def handle_stream(self, stream, address):
