@@ -53,6 +53,12 @@ dummy_cb = lambda _: None
 on_close = lambda stream: stream.close() if not stream.closed() else None
 randint = lambda min, max: min + int(ord(os.urandom(1)) / 256.0 * max)
 
+def safe_write_cb(func):
+    def wrapped(data):
+        if data:
+            func(data)
+    return wrapped
+
 def setup_logger(logger):
     logger.setLevel(logging.DEBUG)
     formatter = logging.Formatter("%(asctime)-15s %(name)-8s %(levelname)-5s %(message)s", "%m-%d %H:%M:%S")
@@ -139,13 +145,17 @@ class ProxyHandler(iostream.IOStream):
             ))
 
         if http_method != "CONNECT":
-            self.read_bytes(int(headers.get("Content-Length", 0)), callback=dummy_cb, streaming_callback=remote.write)
+            content_length = int(headers.get("Content-Length", 0))
+            if content_length:
+                self.read_bytes(content_length, callback=safe_write_cb(remote.write),
+                    streaming_callback=safe_write_cb(remote.write))
             self.wait_for_data()
         else:
-            self.read_until_close(callback=dummy_cb, streaming_callback=remote.write)
+            self.read_until_close(callback=safe_write_cb(remote.write), streaming_callback=safe_write_cb(remote.write))
 
-        remote.read_until_close(callback=dummy_cb, streaming_callback=self.write)
-
+        remote.read_until_close(callback=safe_write_cb(self.write), streaming_callback=safe_write_cb(self.write))
+        # Above codes are using safe_write_cb wrapper, because sometimes callback will be passed with non-empty data,
+        # even streaming_callback is set. This behavior does not conform to documentation.
 
 class ProxyServer(netutil.TCPServer):
     def handle_stream(self, stream, address):
