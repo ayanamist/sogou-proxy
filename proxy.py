@@ -24,6 +24,7 @@ import signal
 import socket
 import struct
 import time
+import types
 import ConfigParser
 from os import path
 
@@ -95,15 +96,34 @@ def calc_sogou_hash(timestamp, host):
     return hex(code)[2:].rstrip("L").zfill(8)
 
 
-class SafeWriteIOStream(iostream.IOStream):
+class StreamClosedError(IOError):
+    pass
+
+
+class MyIOStream(iostream.IOStream):
     # Because sometimes callback will be passed with non-empty data,
     # even streaming_callback is set. This behavior does not conform to documentation.
     def write(self, data, callback=None):
-        if data and not self.closed():
-            super(SafeWriteIOStream, self).write(data, callback=callback)
+        if data:
+            super(MyIOStream, self).write(data, callback=callback)
+
+    def _check_closed(self):
+        if not self.socket:
+            raise StreamClosedError("Stream is closed")
 
 
-class ProxyHandler(SafeWriteIOStream):
+def _run_callback(self, callback):
+    try:
+        callback()
+    except StreamClosedError:
+        pass
+    except Exception:
+        self.handle_callback_exception(callback)
+
+# Replace the method to reduce noisy stream closed logging.
+ioloop.IOLoop._run_callback = types.MethodType(_run_callback, ioloop.IOLoop.instance(), ioloop.IOLoop)
+
+class ProxyHandler(MyIOStream):
     def wait_for_data(self):
         self.read_until("\r\n\r\n", self.on_headers)
 
@@ -112,7 +132,7 @@ class ProxyHandler(SafeWriteIOStream):
         http_method = http_line.split(" ", 1)[0].upper()
         headers = httputil.HTTPHeaders.parse(headers_str)
 
-        remote = SafeWriteIOStream(socket.socket())
+        remote = MyIOStream(socket.socket())
         remote.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
 
         self.set_close_callback(lambda: on_close(remote))
