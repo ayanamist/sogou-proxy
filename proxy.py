@@ -18,21 +18,15 @@ __version__ = "2.0"
 __maintainer__ = "ayanamist"
 __email__ = "ayanamist@gmail.com"
 
-import functools
 import logging
 import os
 import signal
 import socket
 import struct
 import time
+import types
 import ConfigParser
-
-try:
-    import tornado_pyuv
-except ImportError:
-    pass
-else:
-    tornado_pyuv.install()
+from os import path
 
 from tornado import httputil
 from tornado import ioloop
@@ -49,23 +43,13 @@ SERVER_TYPES = [
 
 logger = logging.getLogger(__name__ if __name__ != "__main__" else "")
 
-dummy_cb = lambda _: None
-on_close = lambda stream: stream.close() if not stream.closed() else None
-randint = lambda min, max: min + int(ord(os.urandom(1)) / 256.0 * max)
+def on_close(stream):
+    if not stream.closed():
+        stream.close()
 
-def setup_logger(logger):
-    logger.setLevel(logging.DEBUG)
-    formatter = logging.Formatter("%(asctime)-15s %(name)-8s %(levelname)-5s %(message)s", "%m-%d %H:%M:%S")
 
-    file_handler = logging.FileHandler("%s.log" % os.path.splitext(__file__)[0])
-    file_handler.setLevel(logging.ERROR)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-
-    stderr_handler = logging.StreamHandler()
-    stderr_handler.setLevel(logging.DEBUG)
-    stderr_handler.setFormatter(formatter)
-    logger.addHandler(stderr_handler)
+def randint(min, max):
+    return min + int(ord(os.urandom(1)) / 256.0 * max)
 
 
 def calc_sogou_hash(timestamp, host):
@@ -112,7 +96,34 @@ def calc_sogou_hash(timestamp, host):
     return hex(code)[2:].rstrip("L").zfill(8)
 
 
-class ProxyHandler(iostream.IOStream):
+class StreamClosedError(IOError):
+    pass
+
+
+class MyIOStream(iostream.IOStream):
+    # Because sometimes callback will be passed with non-empty data,
+    # even streaming_callback is set. This behavior does not conform to documentation.
+    def write(self, data, callback=None):
+        if data:
+            super(MyIOStream, self).write(data, callback=callback)
+
+    def _check_closed(self):
+        if not self.socket:
+            raise StreamClosedError("Stream is closed")
+
+
+def _run_callback(self, callback):
+    try:
+        callback()
+    except StreamClosedError:
+        pass
+    except Exception:
+        self.handle_callback_exception(callback)
+
+# Replace the method to reduce noisy stream closed logging.
+ioloop.IOLoop._run_callback = types.MethodType(_run_callback, ioloop.IOLoop.instance(), ioloop.IOLoop)
+
+class ProxyHandler(MyIOStream):
     def wait_for_data(self):
         self.read_until("\r\n\r\n", self.on_headers)
 
@@ -121,11 +132,11 @@ class ProxyHandler(iostream.IOStream):
         http_method = http_line.split(" ", 1)[0].upper()
         headers = httputil.HTTPHeaders.parse(headers_str)
 
-        remote = iostream.IOStream(socket.socket())
+        remote = MyIOStream(socket.socket())
         remote.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
 
-        self.set_close_callback(functools.partial(on_close, remote))
-        remote.set_close_callback(functools.partial(on_close, self))
+        self.set_close_callback(lambda: on_close(remote))
+        remote.set_close_callback(lambda: on_close(self))
 
         remote.connect((resolver.resolve(config.sogou_host), 80))
 
@@ -139,12 +150,16 @@ class ProxyHandler(iostream.IOStream):
             ))
 
         if http_method != "CONNECT":
-            self.read_bytes(int(headers.get("Content-Length", 0)), callback=dummy_cb, streaming_callback=remote.write)
-            self.wait_for_data()
+            content_length = int(headers.get("Content-Length", 0))
+            if content_length:
+                self.read_bytes(content_length, callback=lambda data: remote.write(data) or self.wait_for_data(),
+                    streaming_callback=remote.write)
+            else:
+                self.wait_for_data()
         else:
-            self.read_until_close(callback=dummy_cb, streaming_callback=remote.write)
+            self.read_until_close(callback=remote.write, streaming_callback=remote.write)
 
-        remote.read_until_close(callback=dummy_cb, streaming_callback=self.write)
+        remote.read_until_close(callback=self.write, streaming_callback=self.write)
 
 
 class ProxyServer(netutil.TCPServer):
@@ -205,16 +220,33 @@ class Config(object):
 
 config = Config()
 
+def setup_logger(logger):
+    logger.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("%(asctime)-15s %(name)-8s %(levelname)-5s %(message)s", "%m-%d %H:%M:%S")
+
+    file_handler = logging.FileHandler("%s.log" % path.splitext(__file__)[0])
+    file_handler.setLevel(logging.ERROR)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    stderr_handler = logging.StreamHandler()
+    stderr_handler.setLevel(logging.DEBUG)
+    stderr_handler.setFormatter(formatter)
+    logger.addHandler(stderr_handler)
+
+
 def main():
     setup_logger(logger)
 
-    config.read("%s.ini" % os.path.splitext(__file__)[0])
+    config.read("%s.ini" % path.splitext(__file__)[0])
 
     SIGHUP = getattr(signal, "SIGHUP", None) # Windows does not have SIGHUP.
     if SIGHUP is not None:
         signal.signal(SIGHUP, config.sighup_handler)
 
-    print "Running on %s\nListening on %s:%d" % (config.sogou_host, config.listen_ip, config.listen_port)
+    logger.info("Running on %s" % config.sogou_host)
+    logger.info("Listening on %s:%d" % (config.listen_ip, config.listen_port))
+
     ProxyServer().listen(config.listen_port, config.listen_ip)
     ioloop.IOLoop.instance().start()
 
