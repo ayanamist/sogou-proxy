@@ -132,9 +132,10 @@ class ProxyHandler(SafeWriteIOStream):
         if http_method != "CONNECT":
             content_length = int(headers.get("Content-Length", 0))
             if content_length:
-                self.read_bytes(content_length, callback=remote.write,
+                self.read_bytes(content_length, callback=lambda data: remote.write(data) or self.wait_for_data(),
                     streaming_callback=remote.write)
-            self.wait_for_data()
+            else:
+                self.wait_for_data()
         else:
             self.read_until_close(callback=remote.write, streaming_callback=remote.write)
 
