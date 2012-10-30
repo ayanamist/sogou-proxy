@@ -42,11 +42,6 @@ SERVER_TYPES = [
 
 logger = logging.getLogger(__name__ if __name__ != "__main__" else "")
 
-def on_close(stream):
-    if not stream.closed():
-        stream.close()
-
-
 def randint(min, max):
     return min + int(ord(os.urandom(1)) / 256.0 * max)
 
@@ -94,45 +89,7 @@ def calc_sogou_hash(timestamp, host):
     code &= 0xffffffff
     return hex(code)[2:].rstrip("L").zfill(8)
 
-# Replace the method to reduce noisy stream closed logging.
-def callback_wrapper(func):
-    def wrapped(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except StreamClosedError:
-            pass
-
-    return wrapped
-
-
-class StreamClosedError(IOError):
-    pass
-
-
-class MyIOStream(iostream.IOStream):
-    # Because sometimes callback will be passed with non-empty data,
-    # even streaming_callback is set. This behavior does not conform to documentation.
-    def write(self, data, callback=None):
-        if data:
-            super(MyIOStream, self).write(data, callback=callback)
-
-    def _check_closed(self):
-        if not self.socket:
-            raise StreamClosedError("Stream is closed")
-
-    def _run_callback(self, callback, *args):
-        return super(MyIOStream, self)._run_callback(callback_wrapper(callback), *args)
-
-
-def _ioloop_run_callback_wrapper(func):
-    def _run_callback(self, callback):
-        return func(self, callback_wrapper(callback))
-
-    return _run_callback
-
-ioloop.IOLoop._run_callback = _ioloop_run_callback_wrapper(ioloop.IOLoop._run_callback)
-
-class ProxyHandler(MyIOStream):
+class ProxyHandler(iostream.IOStream):
     def wait_for_data(self):
         self.read_until("\r\n\r\n", self.on_headers)
 
@@ -141,11 +98,11 @@ class ProxyHandler(MyIOStream):
         http_method = http_line.split(" ", 1)[0].upper()
         headers = httputil.HTTPHeaders.parse(headers_str)
 
-        remote = MyIOStream(socket.socket())
+        remote = iostream.IOStream(socket.socket())
         remote.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
 
-        self.set_close_callback(lambda: on_close(remote))
-        remote.set_close_callback(lambda: on_close(self))
+        self.set_close_callback(remote.close)
+        remote.set_close_callback(self.close)
 
         remote.connect((resolver.resolve(config.sogou_host), 80))
 
