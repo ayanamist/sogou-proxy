@@ -89,6 +89,7 @@ def calc_sogou_hash(timestamp, host):
     code &= 0xffffffff
     return hex(code)[2:].rstrip("L").zfill(8)
 
+
 class ProxyHandler(iostream.IOStream):
     def wait_for_data(self):
         self.read_until("\r\n\r\n", self.on_headers)
@@ -107,13 +108,9 @@ class ProxyHandler(iostream.IOStream):
         remote.connect((resolver.resolve(config.sogou_host), 80))
 
         timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
-        remote.write("%s\r\n%s%s" % (
-            http_line,
-            "X-Sogou-Auth: %s\r\nX-Sogou-Timestamp: %s\r\nX-Sogou-Tag: %s\r\n" % (
-                X_SOGOU_AUTH, timestamp, calc_sogou_hash(timestamp, headers.get("Host", ""))
-                ),
-            headers_str,
-            ))
+        remote.write("%s\r\nX-Sogou-Auth: %s\r\nX-Sogou-Timestamp: %s\r\nX-Sogou-Tag: %s\r\n%s" %
+                     (http_line, X_SOGOU_AUTH, timestamp, calc_sogou_hash(timestamp, headers.get("Host", "")),
+                     headers_str))
 
         if http_method != "CONNECT":
             content_length = int(headers.get("Content-Length", 0))
