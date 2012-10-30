@@ -22,7 +22,6 @@ setup(
                 "socket",
                 "struct",
                 "time",
-                "types",
                 "ConfigParser",
                 ],
             "excludes": [
