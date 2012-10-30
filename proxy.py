@@ -24,7 +24,6 @@ import signal
 import socket
 import struct
 import time
-import types
 import ConfigParser
 from os import path
 
@@ -95,6 +94,16 @@ def calc_sogou_hash(timestamp, host):
     code &= 0xffffffff
     return hex(code)[2:].rstrip("L").zfill(8)
 
+# Replace the method to reduce noisy stream closed logging.
+def callback_wrapper(func):
+    def wrapped(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except StreamClosedError:
+            pass
+
+    return wrapped
+
 
 class StreamClosedError(IOError):
     pass
@@ -111,17 +120,17 @@ class MyIOStream(iostream.IOStream):
         if not self.socket:
             raise StreamClosedError("Stream is closed")
 
+    def _run_callback(self, callback, *args):
+        return super(MyIOStream, self)._run_callback(callback_wrapper(callback), *args)
 
-def _run_callback(self, callback):
-    try:
-        callback()
-    except StreamClosedError:
-        pass
-    except Exception:
-        self.handle_callback_exception(callback)
 
-# Replace the method to reduce noisy stream closed logging.
-ioloop.IOLoop._run_callback = types.MethodType(_run_callback, ioloop.IOLoop.instance(), ioloop.IOLoop)
+def _ioloop_run_callback_wrapper(func):
+    def _run_callback(self, callback):
+        return func(self, callback_wrapper(callback))
+
+    return _run_callback
+
+ioloop.IOLoop._run_callback = _ioloop_run_callback_wrapper(ioloop.IOLoop._run_callback)
 
 class ProxyHandler(MyIOStream):
     def wait_for_data(self):
