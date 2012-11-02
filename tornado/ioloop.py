@@ -26,7 +26,7 @@ In addition to I/O events, the `IOLoop` can also schedule time-based events.
 `IOLoop.add_timeout` is a non-blocking alternative to `time.sleep`.
 """
 
-from __future__ import absolute_import, division, with_statement
+from __future__ import absolute_import, division
 
 import datetime
 import errno
@@ -34,12 +34,8 @@ import heapq
 import os
 import logging
 import select
-import thread
-import threading
 import time
 import traceback
-
-from tornado import stack_context
 
 try:
     import signal
@@ -103,18 +99,14 @@ class IOLoop(object):
     ERROR = _EPOLLERR | _EPOLLHUP
 
     # Global lock for creating global IOLoop instance
-    _instance_lock = threading.Lock()
-
     def __init__(self, impl=None):
         self._impl = impl or _poll()
         self._handlers = {}
         self._events = {}
         self._callbacks = []
-        self._callback_lock = threading.Lock()
         self._timeouts = []
         self._running = False
         self._stopped = False
-        self._thread_ident = None
         self._blocking_signal_threshold = None
 
     @staticmethod
@@ -134,10 +126,9 @@ class IOLoop(object):
                     self.io_loop = io_loop or IOLoop.instance()
         """
         if not hasattr(IOLoop, "_instance"):
-            with IOLoop._instance_lock:
-                if not hasattr(IOLoop, "_instance"):
-                    # New instance after double check
-                    IOLoop._instance = IOLoop()
+            if not hasattr(IOLoop, "_instance"):
+                # New instance after double check
+                IOLoop._instance = IOLoop()
         return IOLoop._instance
 
     @staticmethod
@@ -184,7 +175,7 @@ class IOLoop(object):
 
     def add_handler(self, fd, handler, events):
         """Registers the given handler to receive the given events for fd."""
-        self._handlers[fd] = stack_context.wrap(handler)
+        self._handlers[fd] = handler
         self._impl.register(fd, events | self.ERROR)
 
     def update_handler(self, fd, events):
@@ -244,16 +235,14 @@ class IOLoop(object):
         if self._stopped:
             self._stopped = False
             return
-        self._thread_ident = thread.get_ident()
         self._running = True
         while True:
             poll_timeout = 3600.0
 
             # Prevent IO event starvation by delaying new callbacks
             # to the next iteration of the event loop.
-            with self._callback_lock:
-                callbacks = self._callbacks
-                self._callbacks = []
+            callbacks = self._callbacks
+            self._callbacks = []
             for callback in callbacks:
                 self._run_callback(callback)
 
@@ -365,7 +354,7 @@ class IOLoop(object):
         Instead, you must use `add_callback` to transfer control to the
         IOLoop's thread, and then call `add_timeout` from there.
         """
-        timeout = _Timeout(deadline, stack_context.wrap(callback))
+        timeout = _Timeout(deadline, callback)
         heapq.heappush(self._timeouts, timeout)
         return timeout
 
@@ -390,8 +379,7 @@ class IOLoop(object):
         from that IOLoop's thread.  add_callback() may be used to transfer
         control from other threads to the IOLoop's thread.
         """
-        with self._callback_lock:
-            self._callbacks.append(stack_context.wrap(callback))
+        self._callbacks.append(callback)
 
     def _run_callback(self, callback):
         try:
