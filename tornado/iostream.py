@@ -303,6 +303,8 @@ class IOStream(object):
             self._pending_callbacks -= 1
             try:
                 callback(*args)
+            except IOError:
+                pass
             except Exception:
                 logging.error("Uncaught exception, closing connection.",
                               exc_info=True)
@@ -404,6 +406,8 @@ class IOStream(object):
         except socket.error, e:
             if e.args[0] in (errno.EWOULDBLOCK, errno.EAGAIN):
                 return None
+            elif e.args[0] in (errno.ECONNRESET, errno.ECONNABORTED):
+                chunk = None
             else:
                 raise
         if not chunk:

@@ -419,6 +419,8 @@ class IOLoop(object):
     def _run_callback(self, callback):
         try:
             callback()
+        except IOError:
+            pass
         except Exception:
             self.handle_callback_exception(callback)
 
