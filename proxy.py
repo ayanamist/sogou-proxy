@@ -24,7 +24,6 @@ import signal
 import socket
 import struct
 import time
-import types
 import ConfigParser
 from os import path
 
@@ -42,11 +41,6 @@ SERVER_TYPES = [
 ]
 
 logger = logging.getLogger(__name__ if __name__ != "__main__" else "")
-
-def on_close(stream):
-    if not stream.closed():
-        stream.close()
-
 
 def randint(min, max):
     return min + int(ord(os.urandom(1)) / 256.0 * max)
@@ -96,34 +90,7 @@ def calc_sogou_hash(timestamp, host):
     return hex(code)[2:].rstrip("L").zfill(8)
 
 
-class StreamClosedError(IOError):
-    pass
-
-
-class MyIOStream(iostream.IOStream):
-    # Because sometimes callback will be passed with non-empty data,
-    # even streaming_callback is set. This behavior does not conform to documentation.
-    def write(self, data, callback=None):
-        if data:
-            super(MyIOStream, self).write(data, callback=callback)
-
-    def _check_closed(self):
-        if not self.socket:
-            raise StreamClosedError("Stream is closed")
-
-
-def _run_callback(self, callback):
-    try:
-        callback()
-    except StreamClosedError:
-        pass
-    except Exception:
-        self.handle_callback_exception(callback)
-
-# Replace the method to reduce noisy stream closed logging.
-ioloop.IOLoop._run_callback = types.MethodType(_run_callback, ioloop.IOLoop.instance(), ioloop.IOLoop)
-
-class ProxyHandler(MyIOStream):
+class ProxyHandler(iostream.IOStream):
     def wait_for_data(self):
         self.read_until("\r\n\r\n", self.on_headers)
 
@@ -132,22 +99,18 @@ class ProxyHandler(MyIOStream):
         http_method = http_line.split(" ", 1)[0].upper()
         headers = httputil.HTTPHeaders.parse(headers_str)
 
-        remote = MyIOStream(socket.socket())
+        remote = iostream.IOStream(socket.socket())
         remote.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
 
-        self.set_close_callback(lambda: on_close(remote))
-        remote.set_close_callback(lambda: on_close(self))
+        self.set_close_callback(remote.close)
+        remote.set_close_callback(self.close)
 
         remote.connect((resolver.resolve(config.sogou_host), 80))
 
         timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
-        remote.write("%s\r\n%s%s" % (
-            http_line,
-            "X-Sogou-Auth: %s\r\nX-Sogou-Timestamp: %s\r\nX-Sogou-Tag: %s\r\n" % (
-                X_SOGOU_AUTH, timestamp, calc_sogou_hash(timestamp, headers.get("Host", ""))
-                ),
-            headers_str,
-            ))
+        remote.write("%s\r\nX-Sogou-Auth: %s\r\nX-Sogou-Timestamp: %s\r\nX-Sogou-Tag: %s\r\n%s" %
+                     (http_line, X_SOGOU_AUTH, timestamp, calc_sogou_hash(timestamp, headers.get("Host", "")),
+                     headers_str))
 
         if http_method != "CONNECT":
             content_length = int(headers.get("Content-Length", 0))
