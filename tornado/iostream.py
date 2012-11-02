@@ -16,7 +16,7 @@
 
 """A utility class to write to and read from a non-blocking socket."""
 
-from __future__ import absolute_import, division, with_statement
+from __future__ import absolute_import, division
 
 import collections
 import errno
@@ -27,7 +27,6 @@ import sys
 import re
 
 from tornado import ioloop
-from tornado import stack_context
 from tornado.util import b, bytes_type
 
 try:
@@ -137,7 +136,7 @@ class IOStream(object):
                                 self.socket.fileno(), e)
                 self.close()
                 return
-        self._connect_callback = stack_context.wrap(callback)
+        self._connect_callback = callback
         self._add_io_state(self.io_loop.WRITE)
 
     def read_until_regex(self, regex, callback):
@@ -162,7 +161,7 @@ class IOStream(object):
         self._set_read_callback(callback)
         assert isinstance(num_bytes, (int, long))
         self._read_bytes = num_bytes
-        self._streaming_callback = stack_context.wrap(streaming_callback)
+        self._streaming_callback = streaming_callback
         self._try_inline_read()
 
     def read_until_close(self, callback, streaming_callback=None):
@@ -181,7 +180,7 @@ class IOStream(object):
             self._read_callback = None
             return
         self._read_until_close = True
-        self._streaming_callback = stack_context.wrap(streaming_callback)
+        self._streaming_callback = streaming_callback
         self._add_io_state(self.io_loop.READ)
 
     def write(self, data, callback=None):
@@ -206,7 +205,7 @@ class IOStream(object):
                     self._write_buffer.append(data[i:i + WRITE_BUFFER_CHUNK_SIZE])
             else:
                 self._write_buffer.append(data)
-        self._write_callback = stack_context.wrap(callback)
+        self._write_callback = callback
         if not self._connecting:
             self._handle_write()
             if self._write_buffer:
@@ -215,7 +214,7 @@ class IOStream(object):
 
     def set_close_callback(self, callback):
         """Call the given callback when the stream is closed."""
-        self._close_callback = stack_context.wrap(callback)
+        self._close_callback = callback
 
     def close(self):
         """Close this stream."""
@@ -325,14 +324,8 @@ class IOStream(object):
         #   non-reentrant mutexes
         # * Ensures that the try/except in wrapper() is run outside
         #   of the application's StackContexts
-        with stack_context.NullContext():
-            # stack_context was already captured in callback, we don't need to
-            # capture it again for IOStream's wrapper.  This is especially
-            # important if the callback was pre-wrapped before entry to
-            # IOStream (as in HTTPConnection._header_callback), as we could
-            # capture and leak the wrong context here.
-            self._pending_callbacks += 1
-            self.io_loop.add_callback(wrapper)
+        self._pending_callbacks += 1
+        self.io_loop.add_callback(wrapper)
 
     def _handle_read(self):
         try:
@@ -369,7 +362,7 @@ class IOStream(object):
 
     def _set_read_callback(self, callback):
         assert not self._read_callback, "Already reading"
-        self._read_callback = stack_context.wrap(callback)
+        self._read_callback = callback
 
     def _try_inline_read(self):
         """Attempt to complete the current read operation from buffered data.
@@ -601,9 +594,8 @@ class IOStream(object):
             return
         if self._state is None:
             self._state = ioloop.IOLoop.ERROR | state
-            with stack_context.NullContext():
-                self.io_loop.add_handler(
-                    self.socket.fileno(), self._handle_events, self._state)
+            self.io_loop.add_handler(
+                self.socket.fileno(), self._handle_events, self._state)
         elif not self._state & state:
             self._state = self._state | state
             self.io_loop.update_handler(self.socket.fileno(), self._state)
