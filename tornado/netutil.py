@@ -26,7 +26,6 @@ import stat
 
 from tornado.ioloop import IOLoop
 from tornado.iostream import IOStream, SSLIOStream
-from tornado.platform.auto import set_close_exec
 
 try:
     import ssl  # Python 2.6+
@@ -265,7 +264,6 @@ def bind_sockets(port, address=None, family=socket.AF_UNSPEC, backlog=128):
                                   0, flags)):
         af, socktype, proto, canonname, sockaddr = res
         sock = socket.socket(af, socktype, proto)
-        set_close_exec(sock.fileno())
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         if af == socket.AF_INET6:
             # On linux, ipv6 sockets accept ipv4 too by default,
@@ -296,7 +294,6 @@ if hasattr(socket, 'AF_UNIX'):
         `bind_sockets`)
         """
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        set_close_exec(sock.fileno())
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.setblocking(0)
         try:
