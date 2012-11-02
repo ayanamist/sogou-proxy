@@ -46,8 +46,6 @@ try:
 except ImportError:
     signal = None
 
-from tornado.platform.auto import set_close_exec, Waker
-
 
 class IOLoop(object):
     """A level-triggered I/O loop.
@@ -109,8 +107,6 @@ class IOLoop(object):
 
     def __init__(self, impl=None):
         self._impl = impl or _poll()
-        if hasattr(self._impl, 'fileno'):
-            set_close_exec(self._impl.fileno())
         self._handlers = {}
         self._events = {}
         self._callbacks = []
@@ -120,13 +116,6 @@ class IOLoop(object):
         self._stopped = False
         self._thread_ident = None
         self._blocking_signal_threshold = None
-
-        # Create a pipe that we send bogus data to when we want to wake
-        # the I/O loop when it is idle
-        self._waker = Waker()
-        self.add_handler(self._waker.fileno(),
-                         lambda fd, events: self._waker.consume(),
-                         self.READ)
 
     @staticmethod
     def instance():
@@ -185,14 +174,12 @@ class IOLoop(object):
         Therefore the call to `close` will usually appear just after
         the call to `start` rather than near the call to `stop`.
         """
-        self.remove_handler(self._waker.fileno())
         if all_fds:
             for fd in self._handlers.keys()[:]:
                 try:
                     os.close(fd)
                 except Exception:
                     logging.debug("error closing fd %s", fd, exc_info=True)
-        self._waker.close()
         self._impl.close()
 
     def add_handler(self, fd, handler, events):
@@ -360,7 +347,6 @@ class IOLoop(object):
         """
         self._running = False
         self._stopped = True
-        self._waker.wake()
 
     def running(self):
         """Returns true if this IOLoop is currently running."""
@@ -405,16 +391,7 @@ class IOLoop(object):
         control from other threads to the IOLoop's thread.
         """
         with self._callback_lock:
-            list_empty = not self._callbacks
             self._callbacks.append(stack_context.wrap(callback))
-        if list_empty and thread.get_ident() != self._thread_ident:
-            # If we're in the IOLoop's thread, we know it's not currently
-            # polling.  If we're not, and we added the first callback to an
-            # empty list, we may need to wake it up (it may wake up on its
-            # own, but an occasional extra wake is harmless).  Waking
-            # up a polling IOLoop is relatively expensive, so we try to
-            # avoid it when we can.
-            self._waker.wake()
 
     def _run_callback(self, callback):
         try:
