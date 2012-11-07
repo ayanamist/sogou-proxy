@@ -26,7 +26,7 @@ In addition to I/O events, the `IOLoop` can also schedule time-based events.
 `IOLoop.add_timeout` is a non-blocking alternative to `time.sleep`.
 """
 
-from __future__ import absolute_import, division, with_statement
+from __future__ import absolute_import, division
 
 import datetime
 import errno
@@ -34,19 +34,13 @@ import heapq
 import os
 import logging
 import select
-import thread
-import threading
 import time
 import traceback
-
-from tornado import stack_context
 
 try:
     import signal
 except ImportError:
     signal = None
-
-from tornado.platform.auto import set_close_exec, Waker
 
 
 class IOLoop(object):
@@ -105,28 +99,15 @@ class IOLoop(object):
     ERROR = _EPOLLERR | _EPOLLHUP
 
     # Global lock for creating global IOLoop instance
-    _instance_lock = threading.Lock()
-
     def __init__(self, impl=None):
         self._impl = impl or _poll()
-        if hasattr(self._impl, 'fileno'):
-            set_close_exec(self._impl.fileno())
         self._handlers = {}
         self._events = {}
         self._callbacks = []
-        self._callback_lock = threading.Lock()
         self._timeouts = []
         self._running = False
         self._stopped = False
-        self._thread_ident = None
         self._blocking_signal_threshold = None
-
-        # Create a pipe that we send bogus data to when we want to wake
-        # the I/O loop when it is idle
-        self._waker = Waker()
-        self.add_handler(self._waker.fileno(),
-                         lambda fd, events: self._waker.consume(),
-                         self.READ)
 
     @staticmethod
     def instance():
@@ -145,10 +126,9 @@ class IOLoop(object):
                     self.io_loop = io_loop or IOLoop.instance()
         """
         if not hasattr(IOLoop, "_instance"):
-            with IOLoop._instance_lock:
-                if not hasattr(IOLoop, "_instance"):
-                    # New instance after double check
-                    IOLoop._instance = IOLoop()
+            if not hasattr(IOLoop, "_instance"):
+                # New instance after double check
+                IOLoop._instance = IOLoop()
         return IOLoop._instance
 
     @staticmethod
@@ -185,19 +165,17 @@ class IOLoop(object):
         Therefore the call to `close` will usually appear just after
         the call to `start` rather than near the call to `stop`.
         """
-        self.remove_handler(self._waker.fileno())
         if all_fds:
             for fd in self._handlers.keys()[:]:
                 try:
                     os.close(fd)
                 except Exception:
                     logging.debug("error closing fd %s", fd, exc_info=True)
-        self._waker.close()
         self._impl.close()
 
     def add_handler(self, fd, handler, events):
         """Registers the given handler to receive the given events for fd."""
-        self._handlers[fd] = stack_context.wrap(handler)
+        self._handlers[fd] = handler
         self._impl.register(fd, events | self.ERROR)
 
     def update_handler(self, fd, events):
@@ -257,16 +235,14 @@ class IOLoop(object):
         if self._stopped:
             self._stopped = False
             return
-        self._thread_ident = thread.get_ident()
         self._running = True
         while True:
             poll_timeout = 3600.0
 
             # Prevent IO event starvation by delaying new callbacks
             # to the next iteration of the event loop.
-            with self._callback_lock:
-                callbacks = self._callbacks
-                self._callbacks = []
+            callbacks = self._callbacks
+            self._callbacks = []
             for callback in callbacks:
                 self._run_callback(callback)
 
@@ -360,7 +336,6 @@ class IOLoop(object):
         """
         self._running = False
         self._stopped = True
-        self._waker.wake()
 
     def running(self):
         """Returns true if this IOLoop is currently running."""
@@ -379,7 +354,7 @@ class IOLoop(object):
         Instead, you must use `add_callback` to transfer control to the
         IOLoop's thread, and then call `add_timeout` from there.
         """
-        timeout = _Timeout(deadline, stack_context.wrap(callback))
+        timeout = _Timeout(deadline, callback)
         heapq.heappush(self._timeouts, timeout)
         return timeout
 
@@ -404,17 +379,7 @@ class IOLoop(object):
         from that IOLoop's thread.  add_callback() may be used to transfer
         control from other threads to the IOLoop's thread.
         """
-        with self._callback_lock:
-            list_empty = not self._callbacks
-            self._callbacks.append(stack_context.wrap(callback))
-        if list_empty and thread.get_ident() != self._thread_ident:
-            # If we're in the IOLoop's thread, we know it's not currently
-            # polling.  If we're not, and we added the first callback to an
-            # empty list, we may need to wake it up (it may wake up on its
-            # own, but an occasional extra wake is harmless).  Waking
-            # up a polling IOLoop is relatively expensive, so we try to
-            # avoid it when we can.
-            self._waker.wake()
+        self._callbacks.append(callback)
 
     def _run_callback(self, callback):
         try:

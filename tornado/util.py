@@ -1,6 +1,6 @@
 """Miscellaneous utility functions."""
 
-from __future__ import absolute_import, division, with_statement
+from __future__ import absolute_import, division
 
 
 # Fake byte literal support:  In python 2.6+, you can say b"foo" to get
