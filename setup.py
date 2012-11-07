@@ -13,8 +13,6 @@ setup(
             "includes": [
                 "__future__",
                 "contextlib",
-                "ctypes",
-                "ctypes.wintypes",
                 "logging",
                 "os",
                 "select",
@@ -45,6 +43,7 @@ setup(
                 "ssl",
                 "subprocess",
                 "tempfile",
+                "threading",
                 "tokenize",
                 "unittest",
             ]
