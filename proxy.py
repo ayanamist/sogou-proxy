@@ -142,8 +142,9 @@ class Resolver(object):
             except socket.error:
                 return ""
             else:
-                self._cache[hostname] = {"ip": ip, "created_time": time.time()}
-        return self._cache[hostname]["ip"]
+                logger.info("Resolve %s to %s" % (hostname, ip))
+                self._cache[hostname] = ip
+        return self._cache[hostname]
 
 resolver = Resolver()
 
@@ -168,6 +169,7 @@ class Config(object):
 
     def sighup_handler(self, *_):
         self.read(self._config_path)
+        logger.info("Reloaded Config.")
 
     def handle_proxy(self):
         if not self._socket_backup:
@@ -188,7 +190,7 @@ def setup_logger(logger):
     formatter = logging.Formatter("%(asctime)-15s %(name)-8s %(levelname)-5s %(message)s", "%m-%d %H:%M:%S")
 
     file_handler = logging.FileHandler("%s.log" % path.splitext(__file__)[0])
-    file_handler.setLevel(logging.ERROR)
+    file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 
@@ -211,7 +213,11 @@ def main():
     logger.info("Listening on %s:%d" % (config.listen_ip, config.listen_port))
 
     ProxyServer().listen(config.listen_port, config.listen_ip)
-    ioloop.IOLoop.instance().start()
+    try:
+        ioloop.IOLoop.instance().start()
+    except Exception:
+        logger.exception("Error")
+    logger.info("Proxy Exit.")
 
 if __name__ == "__main__":
     main()
