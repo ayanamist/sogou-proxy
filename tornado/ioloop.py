@@ -628,12 +628,8 @@ elif hasattr(select, "kqueue"):
     _poll = _KQueue
 else:
     try:
-        # Linux systems with our C module installed
-        from tornado import epoll
-        _poll = _EPoll
-    except Exception:
-        # All other systems
-        import sys
-        if "linux" in sys.platform:
-            logging.warning("epoll module not found; using select()")
+        from . import iocp
+    except ImportError:
         _poll = _Select
+    else:
+        _poll = iocp.IOCP
