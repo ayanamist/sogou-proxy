@@ -12,11 +12,10 @@ setup(
             "ascii": True,
             "includes": [
                 "__future__",
-                "contextlib",
                 "logging",
                 "os",
+                "pyuv",
                 "select",
-                "signal",
                 "socket",
                 "struct",
                 "time",

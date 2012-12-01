@@ -22,7 +22,6 @@ __email__ = "ayanamist@gmail.com"
 
 import logging
 import os
-import signal
 import socket
 import struct
 import time
@@ -174,10 +173,6 @@ class Config(object):
         self.proxy_type = self._cp.get("proxy", "type").upper()
         self.handle_proxy()
 
-    def sighup_handler(self, *_):
-        self.read(self._config_path)
-        logger.info("Reloaded Config.")
-
     def handle_proxy(self):
         if not self._socket_backup:
             self._socket_backup = socket.socket
@@ -212,16 +207,14 @@ def main():
 
     config.read("%s.ini" % path.splitext(__file__)[0])
 
-    SIGHUP = getattr(signal, "SIGHUP", None) # Windows does not have SIGHUP.
-    if SIGHUP is not None:
-        signal.signal(SIGHUP, config.sighup_handler)
-
     logger.info("Running on %s" % config.sogou_host)
     logger.info("Listening on %s:%d" % (config.listen_ip, config.listen_port))
 
     ProxyServer().listen(config.listen_port, config.listen_ip)
     try:
         ioloop.IOLoop.instance().start()
+    except KeyboardInterrupt:
+        pass
     except Exception:
         logger.exception("Error")
     logger.info("Proxy Exit.")
