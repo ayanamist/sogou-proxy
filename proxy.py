@@ -118,7 +118,7 @@ class ProxyHandler(iostream.IOStream):
         self.set_close_callback(self.remote.close)
         self.remote.set_close_callback(self.close)
 
-        self.remote.connect((resolver.resolve(config.sogou_host), 80))
+        self.remote.connect((config.sogou_host, 80))
 
         timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
         self.remote.write("%sX-Sogou-Auth: %s\r\nX-Sogou-Timestamp: %s\r\nX-Sogou-Tag: %s\r\n%s" %
@@ -150,25 +150,8 @@ class ProxyServer(netutil.TCPServer):
         ProxyHandler(sock).wait_for_request_line()
 
 
-class Resolver(object):
-    _cache = dict()
-
-    def resolve(self, hostname):
-        if hostname not in self._cache:
-            try:
-                ip = socket.gethostbyname(hostname)
-            except socket.error:
-                return ""
-            else:
-                logger.info("Resolve %s to %s" % (hostname, ip))
-                self._cache[hostname] = ip
-        return self._cache[hostname]
-
-resolver = Resolver()
 
 class Config(object):
-    _socket_backup = None
-
     def __init__(self):
         self._cp = ConfigParser.RawConfigParser()
 
@@ -183,19 +166,13 @@ class Config(object):
         self.proxy_host = self._cp.get("proxy", "host")
         self.proxy_port = self._cp.getint("proxy", "port")
         self.proxy_type = self._cp.get("proxy", "type").upper()
-        self.handle_proxy()
 
-    def handle_proxy(self):
-        if not self._socket_backup:
-            self._socket_backup = socket.socket
         if self.proxy_enabled:
             import socks
 
             proxy_type = getattr(socks, "PROXY_TYPE_" + self.proxy_type)
             socks.setdefaultproxy(proxy_type, self.proxy_host, self.proxy_port)
             socket.socket = socks.socksocket
-        else:
-            socket.socket = self._socket_backup
 
 config = Config()
 
