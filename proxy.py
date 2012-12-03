@@ -11,6 +11,8 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+from __future__ import absolute_import
+
 __author__ = "ayanamist"
 __copyright__ = "Copyright 2012"
 __license__ = "GPL"
@@ -20,13 +22,17 @@ __email__ = "ayanamist@gmail.com"
 
 import logging
 import os
-import signal
 import socket
 import struct
 import time
 import ConfigParser
 from os import path
 
+try:
+    import tornado_pyuv
+    tornado_pyuv.install()
+except ImportError:
+    pass
 from tornado import httputil
 from tornado import ioloop
 from tornado import iostream
@@ -142,8 +148,9 @@ class Resolver(object):
             except socket.error:
                 return ""
             else:
-                self._cache[hostname] = {"ip": ip, "created_time": time.time()}
-        return self._cache[hostname]["ip"]
+                logger.info("Resolve %s to %s" % (hostname, ip))
+                self._cache[hostname] = ip
+        return self._cache[hostname]
 
 resolver = Resolver()
 
@@ -166,9 +173,6 @@ class Config(object):
         self.proxy_type = self._cp.get("proxy", "type").upper()
         self.handle_proxy()
 
-    def sighup_handler(self, *_):
-        self.read(self._config_path)
-
     def handle_proxy(self):
         if not self._socket_backup:
             self._socket_backup = socket.socket
@@ -188,7 +192,7 @@ def setup_logger(logger):
     formatter = logging.Formatter("%(asctime)-15s %(name)-8s %(levelname)-5s %(message)s", "%m-%d %H:%M:%S")
 
     file_handler = logging.FileHandler("%s.log" % path.splitext(__file__)[0])
-    file_handler.setLevel(logging.ERROR)
+    file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 
@@ -203,15 +207,17 @@ def main():
 
     config.read("%s.ini" % path.splitext(__file__)[0])
 
-    SIGHUP = getattr(signal, "SIGHUP", None) # Windows does not have SIGHUP.
-    if SIGHUP is not None:
-        signal.signal(SIGHUP, config.sighup_handler)
-
     logger.info("Running on %s" % config.sogou_host)
     logger.info("Listening on %s:%d" % (config.listen_ip, config.listen_port))
 
     ProxyServer().listen(config.listen_port, config.listen_ip)
-    ioloop.IOLoop.instance().start()
+    try:
+        ioloop.IOLoop.instance().start()
+    except KeyboardInterrupt:
+        pass
+    except Exception:
+        logger.exception("Error")
+    logger.info("Proxy Exit.")
 
 if __name__ == "__main__":
     main()
