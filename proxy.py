@@ -16,7 +16,7 @@ from __future__ import absolute_import
 __author__ = "ayanamist"
 __copyright__ = "Copyright 2012"
 __license__ = "GPL"
-__version__ = "2.0"
+__version__ = "2.2"
 __maintainer__ = "ayanamist"
 __email__ = "ayanamist@gmail.com"
 
@@ -30,6 +30,7 @@ from os import path
 
 try:
     import tornado_pyuv
+
     tornado_pyuv.install()
 except ImportError:
     pass
@@ -97,45 +98,56 @@ def calc_sogou_hash(timestamp, host):
 
 
 class ProxyHandler(iostream.IOStream):
-    def wait_for_data(self):
+    def wait_for_request_line(self):
+        self.read_until_regex(r"[A-Z]+ [^ ]+ HTTP/\d\.\d\r\n", self.on_request_line)
+
+    def on_request_line(self, request_line):
+        self.request_line = request_line
+        self.http_method = request_line.split(" ", 1)[0]
+        self.wait_for_headers()
+
+    def wait_for_headers(self):
         self.read_until("\r\n\r\n", self.on_headers)
 
-    def on_headers(self, data):
-        http_line, headers_str = data.split("\r\n", 1)
-        http_method = http_line.split(" ", 1)[0].upper()
+    def on_headers(self, headers_str):
         headers = httputil.HTTPHeaders.parse(headers_str)
 
-        remote = iostream.IOStream(socket.socket())
-        remote.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
+        self.remote = iostream.IOStream(socket.socket())
+        self.remote.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
 
-        self.set_close_callback(remote.close)
-        remote.set_close_callback(self.close)
+        self.set_close_callback(self.remote.close)
+        self.remote.set_close_callback(self.close)
 
-        remote.connect((resolver.resolve(config.sogou_host), 80))
+        self.remote.connect((resolver.resolve(config.sogou_host), 80))
 
         timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
-        remote.write("%s\r\nX-Sogou-Auth: %s\r\nX-Sogou-Timestamp: %s\r\nX-Sogou-Tag: %s\r\n%s" %
-                     (http_line, X_SOGOU_AUTH, timestamp, calc_sogou_hash(timestamp, headers.get("Host", "")),
-                     headers_str))
+        self.remote.write("%sX-Sogou-Auth: %s\r\nX-Sogou-Timestamp: %s\r\nX-Sogou-Tag: %s\r\n%s" %
+                          (self.request_line, X_SOGOU_AUTH, timestamp,
+                           calc_sogou_hash(timestamp, headers.get("Host", "")),
+                           headers_str))
 
-        if http_method != "CONNECT":
+        if self.http_method != "CONNECT":
             content_length = int(headers.get("Content-Length", 0))
             if content_length:
-                self.read_bytes(content_length, callback=lambda data: remote.write(data) or self.wait_for_data(),
-                    streaming_callback=remote.write)
+                self.read_bytes(content_length, callback=self.on_body_end,
+                    streaming_callback=self.remote.write)
             else:
-                self.wait_for_data()
+                self.wait_for_request_line()
         else:
-            self.read_until_close(callback=remote.write, streaming_callback=remote.write)
+            self.read_until_close(callback=self.remote.write, streaming_callback=self.remote.write)
 
-        remote.read_until_close(callback=self.write, streaming_callback=self.write)
+        self.remote.read_until_close(callback=self.write, streaming_callback=self.write)
+
+    def on_body_end(self, data):
+        self.remote.write(data)
+        self.wait_for_request_line()
 
 
 class ProxyServer(netutil.TCPServer):
     def handle_stream(self, stream, address):
         sock = stream.socket
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
-        ProxyHandler(sock).wait_for_data()
+        ProxyHandler(sock).wait_for_request_line()
 
 
 class Resolver(object):
