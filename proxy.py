@@ -98,19 +98,25 @@ def calc_sogou_hash(timestamp, host):
 
 
 class ProxyHandler(iostream.IOStream):
-    def wait_for_request_line(self):
-        self.read_until_regex(r"[A-Z]+ [^ ]+ HTTP/\d\.\d\r\n", self.on_request_line)
+    def wait_for_request(self):
+        self.read_until("\r\n\r\n", self.on_headers_end)
 
-    def on_request_line(self, request_line):
-        self.request_line = request_line
-        self.http_method = request_line.split(" ", 1)[0]
-        self.wait_for_headers()
+    def on_headers_end(self, request_str):
+        def on_request_sent():
+            if request_method == "CONNECT":
+                self.read_until_close(callback=self.remote.write, streaming_callback=self.remote.write)
+                self.remote.read_until_close(callback=self.write, streaming_callback=self.write)
+            else:
+                if content_length:
+                    self.read_bytes(content_length, callback=self.on_request_body_end,
+                        streaming_callback=self.remote.write)
+                else:
+                    self.wait_for_response()
 
-    def wait_for_headers(self):
-        self.read_until("\r\n\r\n", self.on_headers)
-
-    def on_headers(self, headers_str):
+        request_line, headers_str = request_str.split("\r\n", 1)
         headers = httputil.HTTPHeaders.parse(headers_str)
+        request_method = request_line.split(" ", 1)[0]
+        content_length = int(headers.get("Content-Length", 0))
 
         self.remote = iostream.IOStream(socket.socket())
         self.remote.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
@@ -121,34 +127,45 @@ class ProxyHandler(iostream.IOStream):
         self.remote.connect((config.sogou_host, 80))
 
         timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
-        self.remote.write("%sX-Sogou-Auth: %s\r\nX-Sogou-Timestamp: %s\r\nX-Sogou-Tag: %s\r\n%s" %
-                          (self.request_line, X_SOGOU_AUTH, timestamp,
-                           calc_sogou_hash(timestamp, headers.get("Host", "")),
-                           headers_str))
 
-        if self.http_method != "CONNECT":
-            content_length = int(headers.get("Content-Length", 0))
-            if content_length:
-                self.read_bytes(content_length, callback=self.on_body_end,
-                    streaming_callback=self.remote.write)
-            else:
-                self.wait_for_request_line()
-        else:
-            self.read_until_close(callback=self.remote.write, streaming_callback=self.remote.write)
+        new_request_str = "%s\r\nX-Sogou-Auth: %s\r\nX-Sogou-Timestamp: %s\r\nX-Sogou-Tag: %s\r\n%s" % (
+            request_line, X_SOGOU_AUTH, timestamp,
+            calc_sogou_hash(timestamp, headers.get("Host", "")),
+            headers_str)
+        self.remote.write(new_request_str, callback=on_request_sent)
 
-        self.remote.read_until_close(callback=self.write, streaming_callback=self.write)
-
-    def on_body_end(self, data):
+    def on_request_body_end(self, data):
         self.remote.write(data)
-        self.wait_for_request_line()
+        self.wait_for_response()
+
+    def wait_for_response(self):
+        self.remote.read_until("\r\n\r\n", self.on_response_headers_end)
+
+    def on_response_headers_end(self, response_str):
+        status_line, headers_str = response_str.split("\r\n", 1)
+        headers = httputil.HTTPHeaders.parse(headers_str)
+        self.write(response_str)
+        content_length = headers.get("Content-Length")
+        if content_length is None:
+            self.remote.read_until_close(callback=self.write, streaming_callback=self.write)
+        else:
+            content_length = int(content_length)
+            if content_length:
+                self.remote.read_bytes(content_length, callback=self.on_response_body_end,
+                    streaming_callback=self.write)
+            else:
+                self.wait_for_request()
+
+    def on_response_body_end(self, data):
+        self.write(data)
+        self.wait_for_request()
 
 
 class ProxyServer(netutil.TCPServer):
     def handle_stream(self, stream, address):
         sock = stream.socket
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
-        ProxyHandler(sock).wait_for_request_line()
-
+        ProxyHandler(sock).wait_for_request()
 
 
 class Config(object):
