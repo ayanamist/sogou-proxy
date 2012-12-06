@@ -101,6 +101,17 @@ class ProxyHandler(iostream.IOStream):
     def wait_for_request(self):
         self.read_until("\r\n\r\n", self.on_headers_end)
 
+    def on_close_callback_builder(self, soc=None):
+        def wrapped():
+            if soc.writing():
+                soc.write("", callback=soc.close())
+            else:
+                soc.close()
+
+        if soc is None:
+            soc = self
+        return wrapped
+
     def on_headers_end(self, request_str):
         def on_request_sent():
             if request_method == "CONNECT":
@@ -121,8 +132,8 @@ class ProxyHandler(iostream.IOStream):
         self.remote = iostream.IOStream(socket.socket())
         self.remote.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
 
-        self.set_close_callback(self.remote.close)
-        self.remote.set_close_callback(self.close)
+        self.set_close_callback(self.on_close_callback_builder(self.remote))
+        self.remote.set_close_callback(self.on_close_callback_builder(self))
 
         self.remote.connect((config.sogou_host, 80))
 
