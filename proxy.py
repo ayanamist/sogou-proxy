@@ -30,6 +30,7 @@ from os import path
 
 try:
     import tornado_pyuv
+
     tornado_pyuv.install()
 except ImportError:
     pass
@@ -100,6 +101,17 @@ class ProxyHandler(iostream.IOStream):
     def wait_for_data(self):
         self.read_until("\r\n\r\n", self.on_headers)
 
+    def on_close_callback_builder(self, soc=None):
+        def wrapped():
+            if soc.writing():
+                soc.write("", callback=soc.close())
+            else:
+                soc.close()
+
+        if soc is None:
+            soc = self
+        return wrapped
+
     def on_headers(self, data):
         http_line, headers_str = data.split("\r\n", 1)
         http_method = http_line.split(" ", 1)[0].upper()
@@ -108,15 +120,15 @@ class ProxyHandler(iostream.IOStream):
         remote = iostream.IOStream(socket.socket())
         remote.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
 
-        self.set_close_callback(remote.close)
-        remote.set_close_callback(self.close)
+        self.set_close_callback(self.on_close_callback_builder(remote))
+        remote.set_close_callback(self.on_close_callback_builder(self))
 
         remote.connect((resolver.resolve(config.sogou_host), 80))
 
         timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
         remote.write("%s\r\nX-Sogou-Auth: %s\r\nX-Sogou-Timestamp: %s\r\nX-Sogou-Tag: %s\r\n%s" %
                      (http_line, X_SOGOU_AUTH, timestamp, calc_sogou_hash(timestamp, headers.get("Host", "")),
-                     headers_str))
+                      headers_str))
 
         if http_method != "CONNECT":
             content_length = int(headers.get("Content-Length", 0))
