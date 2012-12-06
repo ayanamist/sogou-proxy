@@ -39,7 +39,6 @@ from tornado import ioloop
 from tornado import iostream
 from tornado import netutil
 
-X_SOGOU_AUTH = "9CD285F1E7ADB0BD403C22AD1D545F40/30/853edc6d49ba4e27"
 SERVER_TYPES = [
     ("edu", 16),
     ("ctc", 4),
@@ -49,10 +48,23 @@ SERVER_TYPES = [
 
 logger = logging.getLogger(__name__ if __name__ != "__main__" else "")
 
-def randint(min, max):
-    return min + int(ord(os.urandom(1)) / 256.0 * max)
+def randint(min, max=None):
+    if max is None:
+        min, max = 0, min
+    rand_range = max - min
+    rand_bytes = 0
+    tmp = rand_range
+    while tmp:
+        rand_bytes += 1
+        tmp >>= 8
+    rand_bigint = reduce(lambda x, y: 256 * x + ord(y), os.urandom(rand_bytes), 0)
+    return min + rand_bigint * rand_range / (1 << (rand_bytes * 8))
 
 
+def calc_sogou_auth():
+    return "".join(hex(randint(65536))[2:].upper() for _ in xrange(8)) + "/30/853edc6d49ba4e27"
+
+# From http://xiaoxia.org/2011/03/10/depressed-research-about-sogou-proxy-server-authentication-protocol/
 def calc_sogou_hash(timestamp, host):
     s = timestamp + host + "SogouExplorerProxy"
     length = code = len(s)
@@ -127,7 +139,7 @@ class ProxyHandler(iostream.IOStream):
 
         timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
         remote.write("%s\r\nX-Sogou-Auth: %s\r\nX-Sogou-Timestamp: %s\r\nX-Sogou-Tag: %s\r\n%s" %
-                     (http_line, X_SOGOU_AUTH, timestamp, calc_sogou_hash(timestamp, headers.get("Host", "")),
+                     (http_line, calc_sogou_auth(), timestamp, calc_sogou_hash(timestamp, headers.get("Host", "")),
                       headers_str))
 
         if http_method != "CONNECT":
@@ -178,7 +190,7 @@ class Config(object):
         self.listen_ip = self._cp.get("listen", "ip")
         self.listen_port = self._cp.getint("listen", "port")
         self.server_type = SERVER_TYPES[self._cp.getint("run", "type")]
-        self.sogou_host = "h%d.%s.bj.ie.sogou.com" % (randint(0, self.server_type[1] - 1), self.server_type[0])
+        self.sogou_host = "h%d.%s.bj.ie.sogou.com" % (randint(self.server_type[1]), self.server_type[0])
         self.proxy_enabled = self._cp.getboolean("proxy", "enabled")
         self.proxy_host = self._cp.get("proxy", "host")
         self.proxy_port = self._cp.getint("proxy", "port")
