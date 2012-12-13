@@ -5,18 +5,9 @@ import datetime
 import errno
 import logging
 import time
-import thread
 
 from collections import deque
 from tornado import ioloop
-
-
-class Waker(object):
-    def __init__(self, loop):
-        self._async = pyuv.Async(loop, lambda x: None)
-        self._async.unref()
-    def wake(self):
-        self._async.send()
 
 
 class IOLoop(object):
@@ -25,8 +16,6 @@ class IOLoop(object):
     WRITE = ioloop.IOLoop.WRITE
     ERROR = ioloop.IOLoop.ERROR
 
-    _instance_lock = thread.allocate_lock()
-
     def __init__(self, impl=None):
         if impl is not None:
             raise RuntimeError('When using pyuv the poller implementation cannot be specifiedi')
@@ -34,22 +23,19 @@ class IOLoop(object):
         self._poll_handles = {}
         self._handlers = {}
         self._callbacks = deque()
-        self._callback_lock = thread.allocate_lock()
         self._timeouts = set()
         self._running = False
         self._stopped = False
         self._thread_ident = None
 
         self._cb_handle = pyuv.Prepare(self._loop)
-        self._waker = Waker(self._loop)
 
     @staticmethod
     def instance():
         if not hasattr(IOLoop, "_instance"):
-            with IOLoop._instance_lock:
-                if not hasattr(IOLoop, "_instance"):
-                    # New instance after double check
-                    IOLoop._instance = IOLoop()
+            if not hasattr(IOLoop, "_instance"):
+                # New instance after double check
+                IOLoop._instance = IOLoop()
         return IOLoop._instance
 
     @staticmethod
@@ -90,18 +76,18 @@ class IOLoop(object):
         poll.fd = fd
         self._handlers[fd] = (poll, handler)
         poll_events = 0
-        if (events & IOLoop.READ):
+        if events & IOLoop.READ:
             poll_events |= pyuv.UV_READABLE
-        if (events & IOLoop.WRITE):
+        if events & IOLoop.WRITE:
             poll_events |= pyuv.UV_WRITABLE
         poll.start(poll_events, self._handle_poll_events)
 
     def update_handler(self, fd, events):
         poll, _ = self._handlers[fd]
         poll_events = 0
-        if (events & IOLoop.READ):
+        if events & IOLoop.READ:
             poll_events |= pyuv.UV_READABLE
-        if (events & IOLoop.WRITE):
+        if events & IOLoop.WRITE:
             poll_events |= pyuv.UV_WRITABLE
         poll.start(poll_events, self._handle_poll_events)
 
@@ -121,7 +107,6 @@ class IOLoop(object):
         if self._stopped:
             self._stopped = False
             return
-        self._thread_ident = thread.get_ident()
         self._running = True
         self._loop.update_time()
         while self._running:
@@ -133,7 +118,6 @@ class IOLoop(object):
     def stop(self):
         self._running = False
         self._stopped = True
-        self._waker.wake()
 
     def running(self):
         """Returns true if this IOLoop is currently running."""
@@ -151,13 +135,10 @@ class IOLoop(object):
             timer.stop()
 
     def add_callback(self, callback):
-        with self._callback_lock:
-            was_active = self._cb_handle.active
-            self._callbacks.append(callback)
-            if not was_active:
-                self._cb_handle.start(self._prepare_cb)
-        if not was_active or thread.get_ident() != self._thread_ident:
-            self._waker.wake()
+        was_active = self._cb_handle.active
+        self._callbacks.append(callback)
+        if not was_active:
+            self._cb_handle.start(self._prepare_cb)
 
     def handle_callback_exception(self, callback):
         """This method is called whenever a callback run by the IOLoop
@@ -180,9 +161,9 @@ class IOLoop(object):
     def _handle_poll_events(self, handle, poll_events, error):
         events = 0
         if error is None:
-            if (poll_events & pyuv.UV_READABLE):
+            if poll_events & pyuv.UV_READABLE:
                 events |= IOLoop.READ
-            if (poll_events & pyuv.UV_WRITABLE):
+            if poll_events & pyuv.UV_WRITABLE:
                 events |= IOLoop.WRITE
         fd = handle.fd
         try:
@@ -198,9 +179,8 @@ class IOLoop(object):
 
     def _prepare_cb(self, handle):
         self._cb_handle.stop()
-        with self._callback_lock:
-            callbacks = self._callbacks
-            self._callbacks = deque()
+        callbacks = self._callbacks
+        self._callbacks = deque()
         while callbacks:
             self._run_callback(callbacks.popleft())
 
