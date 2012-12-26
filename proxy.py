@@ -110,49 +110,60 @@ def calc_sogou_hash(timestamp, host):
 
 
 class ProxyHandler(iostream.IOStream):
+    remote = None
+
     def wait_for_data(self):
         self.read_until("\r\n\r\n", self.on_headers)
 
-    def on_close_callback_builder(self, soc=None):
+    def on_close_callback_builder(self, soc):
         def wrapped():
             if soc.writing():
                 soc.write("", callback=soc.close())
             else:
                 soc.close()
 
-        if soc is None:
-            soc = self
         return wrapped
 
-    def on_headers(self, data):
-        http_line, headers_str = data.split("\r\n", 1)
-        http_method = http_line.split(" ", 1)[0].upper()
-        headers = httputil.HTTPHeaders.parse(headers_str)
-
-        remote = iostream.IOStream(socket.socket())
-        remote.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
-
-        self.set_close_callback(self.on_close_callback_builder(remote))
-        remote.set_close_callback(self.on_close_callback_builder(self))
-
-        remote.connect((resolver.resolve(config.sogou_host), 80))
+    def on_remote_connected(self):
+        http_method = self.http_line.split(" ", 1)[0].upper()
+        headers = httputil.HTTPHeaders.parse(self.headers_str)
 
         timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
-        remote.write("%s\r\nX-Sogou-Auth: %s\r\nX-Sogou-Timestamp: %s\r\nX-Sogou-Tag: %s\r\n%s" %
-                     (http_line, calc_sogou_auth(), timestamp, calc_sogou_hash(timestamp, headers.get("Host", "")),
-                      headers_str))
+        self.remote.write(
+            "%s\r\nX-Sogou-Auth: %s\r\nX-Sogou-Timestamp: %s\r\nX-Sogou-Tag: %s\r\n%s" % (
+                self.http_line,
+                calc_sogou_auth(),
+                timestamp,
+                calc_sogou_hash(timestamp, headers.get("Host", "")),
+                self.headers_str
+                )
+        )
 
         if http_method != "CONNECT":
             content_length = int(headers.get("Content-Length", 0))
             if content_length:
-                self.read_bytes(content_length, callback=lambda data: remote.write(data) or self.wait_for_data(),
-                    streaming_callback=remote.write)
+                self.read_bytes(content_length, callback=lambda data: self.remote.write(data) or self.wait_for_data(),
+                    streaming_callback=self.remote.write)
             else:
                 self.wait_for_data()
         else:
-            self.read_until_close(callback=remote.write, streaming_callback=remote.write)
+            self.read_until_close(callback=self.remote.write, streaming_callback=self.remote.write)
 
-        remote.read_until_close(callback=self.write, streaming_callback=self.write)
+        self.remote.read_until_close(callback=self.write, streaming_callback=self.write)
+
+    def on_headers(self, data):
+        self.http_line, self.headers_str = data.split("\r\n", 1)
+
+        if not self.remote:
+            self.remote = iostream.IOStream(socket.socket())
+            self.remote.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
+
+            self.set_close_callback(self.on_close_callback_builder(self.remote))
+            self.remote.set_close_callback(self.on_close_callback_builder(self))
+
+            self.remote.connect((config.sogou_host, 80), self.on_remote_connected)
+        else:
+            self.on_remote_connected()
 
 
 class ProxyServer(netutil.TCPServer):
@@ -161,22 +172,6 @@ class ProxyServer(netutil.TCPServer):
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
         ProxyHandler(sock).wait_for_data()
 
-
-class Resolver(object):
-    _cache = dict()
-
-    def resolve(self, hostname):
-        if hostname not in self._cache:
-            try:
-                ip = socket.gethostbyname(hostname)
-            except socket.error:
-                return ""
-            else:
-                logger.info("Resolve %s to %s" % (hostname, ip))
-                self._cache[hostname] = ip
-        return self._cache[hostname]
-
-resolver = Resolver()
 
 class Config(object):
     _socket_backup = None
