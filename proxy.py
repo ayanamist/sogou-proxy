@@ -28,12 +28,6 @@ import time
 import ConfigParser
 from os import path
 
-try:
-    import tornado_pyuv
-
-    tornado_pyuv.install()
-except ImportError:
-    pass
 from tornado import httputil
 from tornado import ioloop
 from tornado import iostream
@@ -109,61 +103,62 @@ def calc_sogou_hash(timestamp, host):
     return hex(code)[2:].rstrip("L").zfill(8)
 
 
+def on_close_callback_builder(soc):
+    def wrapped():
+        if soc.writing():
+            soc.write("", callback=soc.close())
+        else:
+            soc.close()
+
+    return wrapped
+
+
 class ProxyHandler(iostream.IOStream):
     remote = None
 
     def wait_for_data(self):
         self.read_until("\r\n\r\n", self.on_headers)
 
-    def on_close_callback_builder(self, soc):
-        def wrapped():
-            if soc.writing():
-                soc.write("", callback=soc.close())
-            else:
-                soc.close()
-
-        return wrapped
-
-    def on_remote_connected(self):
-        http_method = self.http_line.split(" ", 1)[0].upper()
-        headers = httputil.HTTPHeaders.parse(self.headers_str)
-
-        timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
-        self.remote.write(
-            "%s\r\nX-Sogou-Auth: %s\r\nX-Sogou-Timestamp: %s\r\nX-Sogou-Tag: %s\r\n%s" % (
-                self.http_line,
-                calc_sogou_auth(),
-                timestamp,
-                calc_sogou_hash(timestamp, headers.get("Host", "")),
-                self.headers_str
-                )
-        )
-
-        if http_method != "CONNECT":
-            content_length = int(headers.get("Content-Length", 0))
-            if content_length:
-                self.read_bytes(content_length, callback=lambda data: self.remote.write(data) or self.wait_for_data(),
-                    streaming_callback=self.remote.write)
-            else:
-                self.wait_for_data()
-        else:
-            self.read_until_close(callback=self.remote.write, streaming_callback=self.remote.write)
-
-        self.remote.read_until_close(callback=self.write, streaming_callback=self.write)
-
     def on_headers(self, data):
-        self.http_line, self.headers_str = data.split("\r\n", 1)
+        def on_remote_connected():
+            http_line, headers_str = data.split("\r\n", 1)
+            http_method = http_line.split(" ", 1)[0].upper()
+            headers = httputil.HTTPHeaders.parse(headers_str)
+
+            timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
+            self.remote.write(
+                "%s\r\nX-Sogou-Auth: %s\r\nX-Sogou-Timestamp: %s\r\nX-Sogou-Tag: %s\r\n%s" % (
+                    http_line,
+                    calc_sogou_auth(),
+                    timestamp,
+                    calc_sogou_hash(timestamp, headers.get("Host", "")),
+                    headers_str
+                    )
+            )
+
+            if http_method != "CONNECT":
+                content_length = int(headers.get("Content-Length", 0))
+                if content_length:
+                    self.read_bytes(content_length,
+                        callback=lambda data: self.remote.write(data) or self.wait_for_data(),
+                        streaming_callback=self.remote.write)
+                else:
+                    self.wait_for_data()
+            else:
+                self.read_until_close(callback=self.remote.write, streaming_callback=self.remote.write)
+
+            self.remote.read_until_close(callback=self.write, streaming_callback=self.write)
 
         if not self.remote:
             self.remote = iostream.IOStream(socket.socket())
             self.remote.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
 
-            self.set_close_callback(self.on_close_callback_builder(self.remote))
-            self.remote.set_close_callback(self.on_close_callback_builder(self))
+            self.set_close_callback(on_close_callback_builder(self.remote))
+            self.remote.set_close_callback(on_close_callback_builder(self))
 
-            self.remote.connect((config.sogou_host, 80), self.on_remote_connected)
+            self.remote.connect((config.sogou_host, 80), on_remote_connected)
         else:
-            self.on_remote_connected()
+            on_remote_connected()
 
 
 class ProxyServer(netutil.TCPServer):
