@@ -16,7 +16,7 @@ from __future__ import absolute_import
 __author__ = "ayanamist"
 __copyright__ = "Copyright 2012"
 __license__ = "GPL"
-__version__ = "2.2"
+__version__ = "2.2.1"
 __maintainer__ = "ayanamist"
 __email__ = "ayanamist@gmail.com"
 
