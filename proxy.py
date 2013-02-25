@@ -16,7 +16,7 @@ from __future__ import absolute_import
 __author__ = "ayanamist"
 __copyright__ = "Copyright 2012"
 __license__ = "GPL"
-__version__ = "2.2.1"
+__version__ = "2.2.2"
 __maintainer__ = "ayanamist"
 __email__ = "ayanamist@gmail.com"
 
@@ -41,22 +41,25 @@ SERVER_TYPES = [
 ]
 
 logger = logging.getLogger(__name__ if __name__ != "__main__" else "")
+_sogou_ip = None
 
-def randint(min, max=None):
-    if max is None:
-        min, max = 0, min
-    rand_range = max - min
+
+def randint(floor, ceil=None):
+    if ceil is None:
+        floor, ceil = 0, floor
+    rand_range = ceil - floor
     rand_bytes = 0
     tmp = rand_range
     while tmp:
         rand_bytes += 1
         tmp >>= 8
     rand_bigint = reduce(lambda x, y: 256 * x + ord(y), os.urandom(rand_bytes), 0)
-    return min + rand_bigint * rand_range / (1 << (rand_bytes * 8))
+    return floor + rand_bigint * rand_range / (1 << (rand_bytes * 8))
 
 
 def calc_sogou_auth():
     return "".join(hex(randint(65536))[2:].upper() for _ in xrange(8)) + "/30/853edc6d49ba4e27"
+
 
 # From http://xiaoxia.org/2011/03/10/depressed-research-about-sogou-proxy-server-authentication-protocol/
 def calc_sogou_hash(timestamp, host):
@@ -112,7 +115,6 @@ def on_close_callback_builder(soc):
 
     return wrapped
 
-_sogou_ip = None
 
 def resolve(host):
     if not _sogou_ip:
@@ -141,15 +143,15 @@ class ProxyHandler(iostream.IOStream):
                     timestamp,
                     calc_sogou_hash(timestamp, headers.get("Host", "")),
                     headers_str
-                    )
+                )
             )
 
             if http_method != "CONNECT":
                 content_length = int(headers.get("Content-Length", 0))
                 if content_length:
                     self.read_bytes(content_length,
-                        callback=lambda data: self.remote.write(data) or self.wait_for_data(),
-                        streaming_callback=self.remote.write)
+                                    callback=lambda data: self.remote.write(data) or self.wait_for_data(),
+                                    streaming_callback=self.remote.write)
                 else:
                     self.wait_for_data()
             else:
@@ -207,7 +209,9 @@ class Config(object):
         else:
             socket.socket = self._socket_backup
 
+
 config = Config()
+
 
 def setup_logger(logger):
     logger.setLevel(logging.DEBUG)
@@ -240,6 +244,7 @@ def main():
     except Exception:
         logger.exception("Error")
     logger.info("Proxy Exit.")
+
 
 if __name__ == "__main__":
     main()
