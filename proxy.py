@@ -156,6 +156,7 @@ class ProxyHandler(iostream.IOStream):
                     self.wait_for_data()
             else:
                 self.read_until_close(callback=self.remote.write, streaming_callback=self.remote.write)
+                self._try_inline_read()
 
             self.remote.read_until_close(callback=self.write, streaming_callback=self.write)
 
