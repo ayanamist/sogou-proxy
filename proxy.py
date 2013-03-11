@@ -33,6 +33,8 @@ from tornado import ioloop
 from tornado import iostream
 from tornado import netutil
 
+import daemon
+
 SERVER_TYPES = [
     ("edu", 16),
     ("ctc", 4),
@@ -195,10 +197,12 @@ class Config(object):
     def read(self, path):
         self._config_path = path
         self._cp.read(path)
-        self.listen_ip = self._cp.get("listen", "ip")
+        self.listen_ip = self._cp.get("listen", "ip").strip()
         self.listen_port = self._cp.getint("listen", "port")
         self.server_type = SERVER_TYPES[self._cp.getint("run", "type")]
         self.sogou_host = "h%d.%s.bj.ie.sogou.com" % (randint(self.server_type[1]), self.server_type[0])
+        self.daemon = self._cp.getboolean("run", "daemon")
+        self.pidfile = self._cp.get("run", "pidfile").strip()
         self.proxy_enabled = self._cp.getboolean("proxy", "enabled")
         self.proxy_host = self._cp.get("proxy", "host")
         self.proxy_port = self._cp.getint("proxy", "port")
@@ -236,22 +240,34 @@ def setup_logger(logger):
     logger.addHandler(stderr_handler)
 
 
+class ProxyDaemon(daemon.Daemon):
+    def __init__(self):
+        daemon.Daemon.__init__(self, config.pidfile)
+
+    def run(self):
+        logger.info("Running on %s" % config.sogou_host)
+        logger.info("Listening on %s:%d" % (config.listen_ip, config.listen_port))
+
+        ProxyServer().listen(config.listen_port, config.listen_ip)
+        try:
+            ioloop.IOLoop.instance().start()
+        except KeyboardInterrupt:
+            pass
+        except Exception:
+            logger.exception("Error")
+        logger.info("Proxy Exit.")
+
+
 def main():
     setup_logger(logger)
 
     config.read("%s.ini" % path.splitext(__file__)[0])
 
-    logger.info("Running on %s" % config.sogou_host)
-    logger.info("Listening on %s:%d" % (config.listen_ip, config.listen_port))
-
-    ProxyServer().listen(config.listen_port, config.listen_ip)
-    try:
-        ioloop.IOLoop.instance().start()
-    except KeyboardInterrupt:
-        pass
-    except Exception:
-        logger.exception("Error")
-    logger.info("Proxy Exit.")
+    daemon = ProxyDaemon()
+    if config.daemon and hasattr(os, "fork"):
+        daemon.start()
+    else:
+        daemon.run()
 
 
 if __name__ == "__main__":
