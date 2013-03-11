@@ -41,7 +41,6 @@ SERVER_TYPES = [
 ]
 
 logger = logging.getLogger(__name__ if __name__ != "__main__" else "")
-_sogou_ip = None
 
 
 def randint(floor, ceil=None):
@@ -116,11 +115,19 @@ def on_close_callback_builder(soc):
     return wrapped
 
 
-def resolve(host):
-    if not _sogou_ip:
-        global _sogou_ip
-        _sogou_ip = socket.gethostbyname(host)
-    return _sogou_ip
+class Resolver(object):
+    _cache = dict()
+
+    def query(self, hostname):
+        hostname = hostname.lower()
+        result = self._cache.get(hostname)
+        if not result:
+            result = socket.gethostbyname(hostname)
+            self._cache[hostname] = result
+        return result
+
+
+resolver = Resolver()
 
 
 class ProxyHandler(iostream.IOStream):
@@ -167,7 +174,7 @@ class ProxyHandler(iostream.IOStream):
             self.set_close_callback(on_close_callback_builder(self.remote))
             self.remote.set_close_callback(on_close_callback_builder(self))
 
-            self.remote.connect((resolve(config.sogou_host), 80), on_remote_connected)
+            self.remote.connect((resolver.query(config.sogou_host), 80), on_remote_connected)
         else:
             on_remote_connected()
 
