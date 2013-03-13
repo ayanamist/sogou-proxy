@@ -141,6 +141,7 @@ class ProxyHandler(iostream.IOStream):
     def on_headers(self, data):
         def on_remote_connected():
             http_line, headers_str = data.split("\r\n", 1)
+            logger.debug(http_line)
             http_method = http_line.split(" ", 1)[0].upper()
             headers = httputil.HTTPHeaders.parse(headers_str)
 
@@ -227,7 +228,7 @@ config = Config()
 
 def setup_logger(logger):
     logger.setLevel(logging.DEBUG)
-    formatter = logging.Formatter("%(asctime)-15s %(name)-8s %(levelname)-5s %(message)s", "%m-%d %H:%M:%S")
+    formatter = logging.Formatter("%(asctime)-14s %(name)-5s %(levelname)-5s %(message)s", "%m-%d %H:%M:%S")
 
     file_handler = logging.FileHandler("%s.log" % path.splitext(__file__)[0])
     file_handler.setLevel(logging.INFO)
