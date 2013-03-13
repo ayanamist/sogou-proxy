@@ -38,12 +38,15 @@ setup(
                 "optparse",
                 "pdb",
                 "pickle",
+                "pyuv",
                 "rfc822",
                 "ssl",
                 "subprocess",
                 "tempfile",
                 "threading",
                 "tokenize",
+                "tornado",
+                "tornado-pyuv",
                 "unittest",
             ]
         }

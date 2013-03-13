@@ -24,6 +24,7 @@ import logging
 import os
 import socket
 import struct
+import sys
 import time
 import ConfigParser
 from os import path
@@ -35,14 +36,34 @@ from tornado import netutil
 
 import daemon
 
+logger = logging.getLogger(__name__ if __name__ != "__main__" else "")
+logger.setLevel(logging.DEBUG)
+formatter = logging.Formatter("%(asctime)-14s %(name)-5s %(levelname)-5s %(message)s", "%m-%d %H:%M:%S")
+
+file_handler = logging.FileHandler("%s.log" % path.splitext(__file__)[0])
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
+
+stderr_handler = logging.StreamHandler()
+stderr_handler.setLevel(logging.DEBUG)
+stderr_handler.setFormatter(formatter)
+logger.addHandler(stderr_handler)
+
+try:
+    from tornado_pyuv import UVLoop
+except ImportError:
+    if "win" in sys.platform:
+        logger.warning("pyuv module not found; using select()")
+else:
+    ioloop.IOLoop.configure(UVLoop)
+
 SERVER_TYPES = [
     ("edu", 16),
     ("ctc", 4),
     ("cnc", 4),
     ("dxt", 16),
 ]
-
-logger = logging.getLogger(__name__ if __name__ != "__main__" else "")
 
 
 def randint(floor, ceil=None):
@@ -226,21 +247,6 @@ class Config(object):
 config = Config()
 
 
-def setup_logger(logger):
-    logger.setLevel(logging.DEBUG)
-    formatter = logging.Formatter("%(asctime)-14s %(name)-5s %(levelname)-5s %(message)s", "%m-%d %H:%M:%S")
-
-    file_handler = logging.FileHandler("%s.log" % path.splitext(__file__)[0])
-    file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-
-    stderr_handler = logging.StreamHandler()
-    stderr_handler.setLevel(logging.DEBUG)
-    stderr_handler.setFormatter(formatter)
-    logger.addHandler(stderr_handler)
-
-
 class ProxyDaemon(daemon.Daemon):
     def __init__(self):
         daemon.Daemon.__init__(self, config.pidfile)
@@ -260,8 +266,6 @@ class ProxyDaemon(daemon.Daemon):
 
 
 def main():
-    setup_logger(logger)
-
     config.read("%s.ini" % path.splitext(__file__)[0])
 
     daemon = ProxyDaemon()
