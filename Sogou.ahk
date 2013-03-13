@@ -38,6 +38,7 @@ return
 
 ShowWindow:
     WinShow, ahk_id %activeWindow%
+    WinActivate, ahk_id %activeWindow%
     Shown = 1
     Gosub MenusShow
 return
