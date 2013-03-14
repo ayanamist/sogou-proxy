@@ -55,6 +55,7 @@ try:
 
     ioloop.IOLoop.configure(tornado_pyuv.UVLoop)
 except ImportError:
+    logger.debug("", exc_info=True)
     if "win" in sys.platform:
         logger.warning("pyuv module not found; using select()")
 

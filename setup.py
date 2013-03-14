@@ -18,6 +18,7 @@ setup(
                 "multiprocessing",
                 "numbers",
                 "os",
+                "pkg_resources",
                 "select",
                 "socket",
                 "struct",
