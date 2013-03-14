@@ -32,7 +32,7 @@ from os import path
 from tornado import httputil
 from tornado import ioloop
 from tornado import iostream
-from tornado import netutil
+from tornado import tcpserver
 
 import daemon
 
@@ -51,12 +51,12 @@ stderr_handler.setFormatter(formatter)
 logger.addHandler(stderr_handler)
 
 try:
-    from tornado_pyuv import UVLoop
+    import tornado_pyuv
+
+    ioloop.IOLoop.configure(tornado_pyuv.UVLoop)
 except ImportError:
     if "win" in sys.platform:
         logger.warning("pyuv module not found; using select()")
-else:
-    ioloop.IOLoop.configure(UVLoop)
 
 SERVER_TYPES = [
     ("edu", 16),
@@ -128,16 +128,6 @@ def calc_sogou_hash(timestamp, host):
     return hex(code)[2:].rstrip("L").zfill(8)
 
 
-def on_close_callback_builder(soc):
-    def wrapped():
-        if soc.writing():
-            soc.write("", callback=soc.close())
-        else:
-            soc.close()
-
-    return wrapped
-
-
 class Resolver(object):
     _cache = dict()
 
@@ -153,9 +143,23 @@ class Resolver(object):
 resolver = Resolver()
 
 
-class ProxyHandler(iostream.IOStream):
+class PairedStream(iostream.IOStream):
     remote = None
 
+    def write(self, data, callback=None):
+        if not self.closed():
+            super(PairedStream, self).write(data, callback=callback)
+
+    def on_close(self):
+        remote = self.remote
+        if isinstance(remote, PairedStream) and not remote.closed():
+            if remote.writing():
+                remote.write("", callback=remote.close)
+            else:
+                remote.close()
+
+
+class ProxyHandler(PairedStream):
     def wait_for_data(self):
         self.read_until("\r\n\r\n", self.on_headers)
 
@@ -192,18 +196,18 @@ class ProxyHandler(iostream.IOStream):
             self.remote.read_until_close(callback=self.write, streaming_callback=self.write)
 
         if not self.remote:
-            self.remote = iostream.IOStream(socket.socket())
+            self.remote = PairedStream(socket.socket())
             self.remote.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
 
-            self.set_close_callback(on_close_callback_builder(self.remote))
-            self.remote.set_close_callback(on_close_callback_builder(self))
+            self.set_close_callback(self.remote.on_close)
+            self.remote.set_close_callback(self.on_close)
 
             self.remote.connect((resolver.query(config.sogou_host), 80), on_remote_connected)
         else:
             on_remote_connected()
 
 
-class ProxyServer(netutil.TCPServer):
+class ProxyServer(tcpserver.TCPServer):
     def handle_stream(self, stream, address):
         sock = stream.socket
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
