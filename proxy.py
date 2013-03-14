@@ -194,7 +194,8 @@ class ProxyHandler(PairedStream):
                 self.read_until_close(callback=self.remote.write, streaming_callback=self.remote.write)
                 self._try_inline_read()
 
-            self.remote.read_until_close(callback=self.write, streaming_callback=self.write)
+            if not self.remote.reading():
+                self.remote.read_until_close(callback=self.write, streaming_callback=self.write)
 
         if not self.remote:
             self.remote = PairedStream(socket.socket())
@@ -212,7 +213,10 @@ class ProxyServer(tcpserver.TCPServer):
     def handle_stream(self, stream, address):
         sock = stream.socket
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
-        ProxyHandler(sock).wait_for_data()
+        try:
+            ProxyHandler(sock).wait_for_data()
+        except iostream.StreamClosedError:
+            pass
 
 
 class Config(object):
