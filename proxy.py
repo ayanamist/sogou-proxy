@@ -82,53 +82,63 @@ def randint(floor, ceil=None):
     return floor + rand_bigint * rand_range / (1 << (rand_bytes * 8))
 
 
-def calc_sogou_auth():
-    return "".join(hex(randint(65536))[2:].upper() for _ in xrange(8)) + "/30/853edc6d49ba4e27"
+class Sogou(object):
+    @staticmethod
+    def instance():
+        if not hasattr(Sogou, "_instance"):
+            Sogou._instance = Sogou()
+        return Sogou._instance
 
+    def __init__(self):
+        super(Sogou, self).__init__()
+        self.auth_str = self.calc_auth()
 
-# From http://xiaoxia.org/2011/03/10/depressed-research-about-sogou-proxy-server-authentication-protocol/
-def calc_sogou_hash(timestamp, host):
-    s = timestamp + host + "SogouExplorerProxy"
-    length = code = len(s)
-    dwords = code / 4
-    rest = code % 4
-    fmt = "%di%ds" % (dwords, rest)
-    v = struct.unpack(fmt, s)
-    for i in xrange(dwords):
-        vv = v[i]
-        a = vv & 0xffff
-        b = vv >> 16
-        code += a
-        code ^= ((code << 5) ^ b) << 11
-        # To avoid overflows
+    def calc_auth(self):
+        return "".join(hex(randint(65536))[2:].upper() for _ in xrange(8)) + "/30/853edc6d49ba4e27"
+
+    # From http://xiaoxia.org/2011/03/10/depressed-research-about-sogou-proxy-server-authentication-protocol/
+    def calc_tag_hash(self, timestamp, host):
+        s = timestamp + host + "SogouExplorerProxy"
+        length = code = len(s)
+        dwords = code / 4
+        rest = code % 4
+        fmt = "%di%ds" % (dwords, rest)
+        v = struct.unpack(fmt, s)
+        for i in xrange(dwords):
+            vv = v[i]
+            a = vv & 0xffff
+            b = vv >> 16
+            code += a
+            code ^= ((code << 5) ^ b) << 11
+            # To avoid overflows
+            code &= 0xffffffff
+            code += code >> 11
+        if rest == 3:
+            code += ord(s[length - 2]) * 256 + ord(s[length - 3])
+            code ^= (code ^ (ord(s[length - 1]) * 4)) << 16
+            code &= 0xffffffff
+            code += code >> 11
+        elif rest == 2:
+            code += ord(s[length - 1]) * 256 + ord(s[length - 2])
+            code ^= code << 11
+            code &= 0xffffffff
+            code += code >> 17
+        elif rest == 1:
+            code += ord(s[length - 1])
+            code ^= code << 10
+            code &= 0xffffffff
+            code += code >> 1
+        code ^= code * 8
         code &= 0xffffffff
-        code += code >> 11
-    if rest == 3:
-        code += ord(s[length - 2]) * 256 + ord(s[length - 3])
-        code ^= (code ^ (ord(s[length - 1]) * 4)) << 16
-        code &= 0xffffffff
-        code += code >> 11
-    elif rest == 2:
-        code += ord(s[length - 1]) * 256 + ord(s[length - 2])
-        code ^= code << 11
+        code += code >> 5
+        code ^= code << 4
         code &= 0xffffffff
         code += code >> 17
-    elif rest == 1:
-        code += ord(s[length - 1])
-        code ^= code << 10
+        code ^= code << 25
         code &= 0xffffffff
-        code += code >> 1
-    code ^= code * 8
-    code &= 0xffffffff
-    code += code >> 5
-    code ^= code << 4
-    code &= 0xffffffff
-    code += code >> 17
-    code ^= code << 25
-    code &= 0xffffffff
-    code += code >> 6
-    code &= 0xffffffff
-    return hex(code)[2:].rstrip("L").zfill(8)
+        code += code >> 6
+        code &= 0xffffffff
+        return hex(code)[2:].rstrip("L").zfill(8)
 
 
 class Resolver(object):
@@ -184,9 +194,9 @@ class ProxyHandler(PairedStream):
             self.remote.write(
                 "%s\r\nX-Sogou-Auth: %s\r\nX-Sogou-Timestamp: %s\r\nX-Sogou-Tag: %s\r\n%s" % (
                     http_line,
-                    calc_sogou_auth(),
+                    Sogou.instance().calc_auth,
                     timestamp,
-                    calc_sogou_hash(timestamp, headers.get("Host", "")),
+                    Sogou.instance().calc_tag_hash(timestamp, headers.get("Host", "")),
                     headers_str
                 )
             )
@@ -216,7 +226,7 @@ class ProxyHandler(PairedStream):
             try:
                 self.remote.connect((Resolver.instance().query(Config.instance().sogou_host), 80), on_remote_connected)
             except socket.gaierror as e:
-                if e.errno == 11001: # getaddrinfo failed
+                if e.errno == 11001:  # getaddrinfo failed
                     self.write(GETADDRINFO_MSG, callback=self.close)
                 else:
                     raise
