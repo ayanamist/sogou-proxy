@@ -162,7 +162,11 @@ class PairedStream(iostream.IOStream):
 
 class ProxyHandler(PairedStream):
     def wait_for_data(self):
-        self.read_until("\r\n\r\n", self.on_headers)
+        try:
+            self.read_until("\r\n\r\n", self.on_headers)
+        except iostream.StreamClosedError:
+            if self.remote and not self.closed():
+                self.remote.close()
 
     def on_headers(self, data):
         def on_remote_connected():
@@ -213,10 +217,7 @@ class ProxyServer(tcpserver.TCPServer):
     def handle_stream(self, stream, address):
         sock = stream.socket
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
-        try:
-            ProxyHandler(sock).wait_for_data()
-        except iostream.StreamClosedError:
-            pass
+        ProxyHandler(sock).wait_for_data()
 
 
 class Config(object):
