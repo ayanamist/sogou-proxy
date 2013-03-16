@@ -82,6 +82,7 @@ def randint(floor, ceil=None):
     return floor + rand_bigint * rand_range / (1 << (rand_bytes * 8))
 
 
+# From http://xiaoxia.org/2011/03/10/depressed-research-about-sogou-proxy-server-authentication-protocol/
 class Sogou(object):
     @staticmethod
     def instance():
@@ -91,13 +92,15 @@ class Sogou(object):
 
     def __init__(self):
         super(Sogou, self).__init__()
-        self.auth_str = self.calc_auth()
+        self.auth_str = self.auth()
 
-    def calc_auth(self):
+    def auth(self):
         return "".join(hex(randint(65536))[2:].upper() for _ in xrange(8)) + "/30/853edc6d49ba4e27"
 
-    # From http://xiaoxia.org/2011/03/10/depressed-research-about-sogou-proxy-server-authentication-protocol/
-    def calc_tag_hash(self, timestamp, host):
+    def timestamp(self):
+        return hex(int(time.time()))[2:].rstrip("L").zfill(8)
+
+    def tag(self, timestamp, host):
         s = timestamp + host + "SogouExplorerProxy"
         length = code = len(s)
         dwords = code / 4
@@ -190,7 +193,8 @@ class ProxyHandler(PairedStream):
             http_method = http_line.split(" ", 1)[0].upper()
             headers = httputil.HTTPHeaders.parse(headers_str)
 
-            timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
+            sogou = Sogou.instance()
+            timestamp = sogou.timestamp()
             self.remote.write(
                 "{http_line}\r\n"
                 "X-Sogou-Auth: {sogou_auth}\r\n"
@@ -198,9 +202,9 @@ class ProxyHandler(PairedStream):
                 "X-Sogou-Tag: {sogou_tag}\r\n"
                 "{headers}".format(
                     http_line=http_line,
-                    sogou_auth=Sogou.instance().calc_auth,
+                    sogou_auth=sogou.auth,
                     sogou_timestamp=timestamp,
-                    sogou_tag=Sogou.instance().calc_tag_hash(timestamp, headers.get("Host", "")),
+                    sogou_tag=sogou.tag(timestamp, headers.get("Host", "")),
                     headers=headers_str,
                 )
             )
