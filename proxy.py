@@ -66,6 +66,8 @@ SERVER_TYPES = [
     ("dxt", 16),
 ]
 
+GETADDRINFO_MSG = "HTTP/1.1 502 Bad Gateway\r\nServer: SogouProxy\r\nConnection: close\r\n\r\ngetaddrinfo failed"
+
 
 def randint(floor, ceil=None):
     if ceil is None:
@@ -208,7 +210,13 @@ class ProxyHandler(PairedStream):
             self.set_close_callback(self.remote.on_close)
             self.remote.set_close_callback(self.on_close)
 
-            self.remote.connect((resolver.query(config.sogou_host), 80), on_remote_connected)
+            try:
+                self.remote.connect((resolver.query(config.sogou_host), 80), on_remote_connected)
+            except socket.gaierror as e:
+                if e.errno == 11001: # getaddrinfo failed
+                    self.write(GETADDRINFO_MSG, callback=self.close)
+                else:
+                    raise
         else:
             on_remote_connected()
 
