@@ -142,8 +142,11 @@ class Resolver(object):
             self._cache[hostname] = result
         return result
 
-
-resolver = Resolver()
+    @staticmethod
+    def instance():
+        if not hasattr(Resolver, "_instance"):
+            Resolver._instance = Resolver()
+        return Resolver._instance
 
 
 class PairedStream(iostream.IOStream):
@@ -211,7 +214,7 @@ class ProxyHandler(PairedStream):
             self.remote.set_close_callback(self.on_close)
 
             try:
-                self.remote.connect((resolver.query(config.sogou_host), 80), on_remote_connected)
+                self.remote.connect((Resolver.instance().query(Config.instance().sogou_host), 80), on_remote_connected)
             except socket.gaierror as e:
                 if e.errno == 11001: # getaddrinfo failed
                     self.write(GETADDRINFO_MSG, callback=self.close)
@@ -250,26 +253,26 @@ class Config(object):
         self.handle_proxy()
 
     def handle_proxy(self):
-        if not self._socket_backup:
-            self._socket_backup = socket.socket
         if self.proxy_enabled:
             import socks
 
             proxy_type = getattr(socks, "PROXY_TYPE_" + self.proxy_type)
             socks.setdefaultproxy(proxy_type, self.proxy_host, self.proxy_port)
             socket.socket = socks.socksocket
-        else:
-            socket.socket = self._socket_backup
 
-
-config = Config()
+    @staticmethod
+    def instance():
+        if not hasattr(Config, "_instance"):
+            Config._instance = Config()
+        return Config._instance
 
 
 class ProxyDaemon(daemon.Daemon):
     def __init__(self):
-        daemon.Daemon.__init__(self, config.pidfile)
+        daemon.Daemon.__init__(self, Config.instance().pidfile)
 
     def run(self):
+        config = Config.instance()
         logger.info("Running on %s" % config.sogou_host)
         logger.info("Listening on %s:%d" % (config.listen_ip, config.listen_port))
 
@@ -284,6 +287,7 @@ class ProxyDaemon(daemon.Daemon):
 
 
 def main():
+    config = Config.instance()
     config.read("%s.ini" % path.splitext(__file__)[0])
 
     daemon = ProxyDaemon()
