@@ -192,12 +192,16 @@ class ProxyHandler(PairedStream):
 
             timestamp = hex(int(time.time()))[2:].rstrip("L").zfill(8)
             self.remote.write(
-                "%s\r\nX-Sogou-Auth: %s\r\nX-Sogou-Timestamp: %s\r\nX-Sogou-Tag: %s\r\n%s" % (
-                    http_line,
-                    Sogou.instance().calc_auth,
-                    timestamp,
-                    Sogou.instance().calc_tag_hash(timestamp, headers.get("Host", "")),
-                    headers_str
+                "{http_line}\r\n"
+                "X-Sogou-Auth: {sogou_auth}\r\n"
+                "X-Sogou-Timestamp: {sogou_timestamp}\r\n"
+                "X-Sogou-Tag: {sogou_tag}\r\n"
+                "{headers}".format(
+                    http_line=http_line,
+                    sogou_auth=Sogou.instance().calc_auth,
+                    sogou_timestamp=timestamp,
+                    sogou_tag=Sogou.instance().calc_tag_hash(timestamp, headers.get("Host", "")),
+                    headers=headers_str,
                 )
             )
 
