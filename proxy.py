@@ -202,7 +202,7 @@ class ProxyHandler(PairedStream):
                 "X-Sogou-Tag: {sogou_tag}\r\n"
                 "{headers}".format(
                     http_line=http_line,
-                    sogou_auth=sogou.auth,
+                    sogou_auth=sogou.auth_str,
                     sogou_timestamp=timestamp,
                     sogou_tag=sogou.tag(timestamp, headers.get("Host", "")),
                     headers=headers_str,
