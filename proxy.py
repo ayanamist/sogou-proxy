@@ -144,6 +144,12 @@ class Sogou(object):
 class Resolver(object):
     _cache = dict()
 
+    @staticmethod
+    def instance():
+        if not hasattr(Resolver, "_instance"):
+            Resolver._instance = Resolver()
+        return Resolver._instance
+
     def query(self, hostname):
         hostname = hostname.lower()
         result = self._cache.get(hostname)
@@ -151,12 +157,6 @@ class Resolver(object):
             result = socket.gethostbyname(hostname)
             self._cache[hostname] = result
         return result
-
-    @staticmethod
-    def instance():
-        if not hasattr(Resolver, "_instance"):
-            Resolver._instance = Resolver()
-        return Resolver._instance
 
 
 class PairedStream(iostream.IOStream):
@@ -242,7 +242,11 @@ class ProxyServer(tcpserver.TCPServer):
 
 
 class Config(object):
-    _socket_backup = None
+    @staticmethod
+    def instance():
+        if not hasattr(Config, "_instance"):
+            Config._instance = Config()
+        return Config._instance
 
     def __init__(self):
         self._cp = ConfigParser.RawConfigParser()
@@ -270,12 +274,6 @@ class Config(object):
             socks.setdefaultproxy(proxy_type, self.proxy_host, self.proxy_port)
             socket.socket = socks.socksocket
 
-    @staticmethod
-    def instance():
-        if not hasattr(Config, "_instance"):
-            Config._instance = Config()
-        return Config._instance
-
 
 class ProxyDaemon(daemon.Daemon):
     def __init__(self):
@@ -290,7 +288,7 @@ class ProxyDaemon(daemon.Daemon):
         try:
             ioloop.IOLoop.instance().start()
         except KeyboardInterrupt:
-            pass
+            sys.exit(0)
         except Exception:
             logger.exception("Error")
         logger.info("Proxy Exit.")
