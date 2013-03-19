@@ -184,7 +184,7 @@ class PairedStream(iostream.IOStream):
 
     def on_close(self):
         remote = self.remote
-        if not remote.closed():
+        if remote and not remote.closed():
             if remote.writing():
                 remote.write("", callback=remote.close)
             else:
@@ -196,8 +196,7 @@ class ProxyHandler(PairedStream):
         try:
             self.read_until("\r\n\r\n", self.on_headers)
         except iostream.StreamClosedError:
-            if self.remote and not self.closed():
-                self.remote.close()
+            self.on_close()
 
     def on_headers(self, data):
         def on_remote_connected():
