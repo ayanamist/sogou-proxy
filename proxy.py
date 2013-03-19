@@ -20,6 +20,7 @@ __version__ = "2.2.2"
 __maintainer__ = "ayanamist"
 __email__ = "ayanamist@gmail.com"
 
+import errno
 import logging
 import os
 import socket
@@ -166,12 +167,24 @@ class PairedStream(iostream.IOStream):
     remote = None
 
     def write(self, data, callback=None):
-        if not self.closed():
+        try:
             super(PairedStream, self).write(data, callback=callback)
+        except iostream.StreamClosedError:
+            pass
+
+    def _read_to_buffer(self):
+        try:
+            return super(PairedStream, self)._read_to_buffer()
+        except socket.error as e:
+            if e.args[0] == errno.ECONNABORTED:
+                # Treat ECONNABORTED as a connection close rather than
+                # an error to minimize log spam.
+                return
+            raise
 
     def on_close(self):
         remote = self.remote
-        if isinstance(remote, PairedStream) and not remote.closed():
+        if not remote.closed():
             if remote.writing():
                 remote.write("", callback=remote.close)
             else:
