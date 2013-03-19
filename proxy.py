@@ -192,13 +192,13 @@ class PairedStream(iostream.IOStream):
 
 
 class ProxyHandler(PairedStream):
-    def wait_for_data(self):
+    def wait_for_request(self):
         try:
-            self.read_until("\r\n\r\n", self.on_headers)
+            self.read_until("\r\n\r\n", self.on_request_headers)
         except iostream.StreamClosedError:
             self.on_close()
 
-    def on_headers(self, data):
+    def on_request_headers(self, data):
         def on_remote_connected():
             http_line, headers_str = data.split("\r\n", 1)
             logger.debug(http_line)
@@ -225,10 +225,10 @@ class ProxyHandler(PairedStream):
                 content_length = int(headers.get("Content-Length", 0))
                 if content_length:
                     self.read_bytes(content_length,
-                                    callback=lambda data: self.remote.write(data) or self.wait_for_data(),
+                                    callback=lambda data: self.remote.write(data) or self.wait_for_request(),
                                     streaming_callback=self.remote.write)
                 else:
-                    self.wait_for_data()
+                    self.wait_for_request()
             else:
                 self.read_until_close(callback=self.remote.write, streaming_callback=self.remote.write)
                 self._try_inline_read()
@@ -246,7 +246,7 @@ class ProxyHandler(PairedStream):
             try:
                 self.remote.connect((Resolver.instance().query(Config.instance().sogou_host), 80), on_remote_connected)
             except socket.gaierror as e:
-                if e.errno == 11001:  # getaddrinfo failed
+                if e.args[0] == 11001:  # getaddrinfo failed
                     self.write(GETADDRINFO_MSG, callback=self.close)
                 else:
                     raise
@@ -258,7 +258,7 @@ class ProxyServer(tcpserver.TCPServer):
     def handle_stream(self, stream, address):
         sock = stream.socket
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
-        ProxyHandler(sock).wait_for_data()
+        ProxyHandler(sock).wait_for_request()
 
 
 class Config(object):
