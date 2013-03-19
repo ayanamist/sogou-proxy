@@ -67,7 +67,10 @@ SERVER_TYPES = [
     ("dxt", 16),
 ]
 
-GETADDRINFO_MSG = "HTTP/1.1 502 Bad Gateway\r\nServer: SogouProxy\r\nConnection: close\r\n\r\ngetaddrinfo failed"
+GET_ADDRINFO_FAILED_MSG = "HTTP/1.1 502 Bad Gateway\r\n" \
+                          "Server: SogouProxy\r\n" \
+                          "Connection: close\r\n\r\n" \
+                          "getaddrinfo failed"
 
 
 def randint(floor, ceil=None):
@@ -246,7 +249,7 @@ class ProxyHandler(PairedStream):
                 self.remote.connect((Resolver.instance().query(Config.instance().sogou_host), 80), on_remote_connected)
             except socket.gaierror as e:
                 if e.args[0] == 11001:  # getaddrinfo failed
-                    self.write(GETADDRINFO_MSG, callback=self.close)
+                    self.write(GET_ADDRINFO_FAILED_MSG, callback=self.close)
                 else:
                     raise
         else:
