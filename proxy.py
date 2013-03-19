@@ -16,7 +16,7 @@ from __future__ import absolute_import
 __author__ = "ayanamist"
 __copyright__ = "Copyright 2012"
 __license__ = "GPL"
-__version__ = "2.2.2"
+__version__ = "2.3"
 __maintainer__ = "ayanamist"
 __email__ = "ayanamist@gmail.com"
 
@@ -170,7 +170,7 @@ class PairedStream(iostream.IOStream):
         try:
             super(PairedStream, self).write(data, callback=callback)
         except iostream.StreamClosedError:
-            pass
+            self.close()
 
     def _read_to_buffer(self):
         try:
@@ -231,7 +231,6 @@ class ProxyHandler(PairedStream):
                     self.wait_for_request()
             else:
                 self.read_until_close(callback=self.remote.write, streaming_callback=self.remote.write)
-                self._try_inline_read()
 
             if not self.remote.reading():
                 self.remote.read_until_close(callback=self.write, streaming_callback=self.write)
