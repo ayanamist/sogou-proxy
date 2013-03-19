@@ -67,10 +67,10 @@ SERVER_TYPES = [
     ("dxt", 16),
 ]
 
-GET_ADDRINFO_FAILED_MSG = "HTTP/1.1 502 Bad Gateway\r\n" \
-                          "Server: SogouProxy\r\n" \
-                          "Connection: close\r\n\r\n" \
-                          "getaddrinfo failed"
+BAD_GATEWAY_MSG = "HTTP/1.1 502 Bad Gateway\r\n" \
+                  "Server: SogouProxy\r\n" \
+                  "Connection: close\r\n\r\n"
+GET_ADDRINFO_FAILED_MSG = BAD_GATEWAY_MSG + "getaddrinfo failed"
 
 
 def rand_int(floor, ceil=None):
