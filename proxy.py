@@ -73,7 +73,7 @@ GET_ADDRINFO_FAILED_MSG = "HTTP/1.1 502 Bad Gateway\r\n" \
                           "getaddrinfo failed"
 
 
-def randint(floor, ceil=None):
+def rand_int(floor, ceil=None):
     if ceil is None:
         floor, ceil = 0, floor
     rand_range = ceil - floor
@@ -99,7 +99,7 @@ class Sogou(object):
         self.auth_str = self.auth()
 
     def auth(self):
-        return "".join(hex(randint(65536))[2:].upper() for _ in xrange(8)) + "/30/853edc6d49ba4e27"
+        return "".join(hex(rand_int(65536))[2:].upper() for _ in xrange(8)) + "/30/853edc6d49ba4e27"
 
     def timestamp(self):
         return hex(int(time.time()))[2:].rstrip("L").zfill(8)
@@ -279,7 +279,7 @@ class Config(object):
         self.listen_ip = self._cp.get("listen", "ip").strip()
         self.listen_port = self._cp.getint("listen", "port")
         self.server_type = SERVER_TYPES[self._cp.getint("run", "type")]
-        self.sogou_host = "h%d.%s.bj.ie.sogou.com" % (randint(self.server_type[1]), self.server_type[0])
+        self.sogou_host = "h%d.%s.bj.ie.sogou.com" % (rand_int(self.server_type[1]), self.server_type[0])
         self.daemon = self._cp.getboolean("run", "daemon")
         self.pidfile = self._cp.get("run", "pidfile").strip()
         self.proxy_enabled = self._cp.getboolean("proxy", "enabled")
