@@ -61,10 +61,10 @@ except ImportError:
         logger.warning("pyuv module not found; using select()")
 
 SERVER_TYPES = [
-    ("edu", 16),
+    ("edu", 4),
     ("ctc", 4),
     ("cnc", 4),
-    ("dxt", 16),
+    ("dxt", 4),
 ]
 
 BAD_GATEWAY_MSG = "HTTP/1.1 502 Bad Gateway\r\n" \
@@ -173,7 +173,8 @@ class PairedStream(iostream.IOStream):
         try:
             super(PairedStream, self).write(data, callback=callback)
         except iostream.StreamClosedError:
-            self.close()
+            # Do not use self.close() for it may not run close callback.
+            self.on_close()
 
     def _read_to_buffer(self):
         try:
@@ -182,6 +183,8 @@ class PairedStream(iostream.IOStream):
             if e.args[0] == errno.ECONNABORTED:
                 # Treat ECONNABORTED as a connection close rather than
                 # an error to minimize log spam.
+                if not self.closed():
+                    self.close(exc_info=True)
                 return
             raise
 
@@ -203,8 +206,6 @@ class ProxyHandler(PairedStream):
 
     def on_request_headers(self, data):
         def on_remote_connected():
-            http_line, headers_str = data.split("\r\n", 1)
-            logger.debug(http_line)
             http_method = http_line.split(" ", 1)[0].upper()
             headers = httputil.HTTPHeaders.parse(headers_str)
 
@@ -238,6 +239,9 @@ class ProxyHandler(PairedStream):
             if not self.remote.reading():
                 self.remote.read_until_close(callback=self.write, streaming_callback=self.write)
 
+        http_line, headers_str = data.split("\r\n", 1)
+        logger.debug(http_line)
+
         if not self.remote:
             self.remote = PairedStream(socket.socket())
             self.remote.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
@@ -249,6 +253,7 @@ class ProxyHandler(PairedStream):
                 self.remote.connect((Resolver.instance().query(Config.instance().sogou_host), 80), on_remote_connected)
             except socket.gaierror as e:
                 if e.args[0] == 11001:  # getaddrinfo failed
+                    logger.warning("getaddrinfo failed.")
                     self.write(GET_ADDRINFO_FAILED_MSG, callback=self.close)
                 else:
                     raise
