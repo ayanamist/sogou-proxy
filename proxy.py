@@ -56,7 +56,6 @@ try:
 
     ioloop.IOLoop.configure(tornado_pyuv.UVLoop)
 except ImportError:
-    logger.debug("", exc_info=True)
     if "win" in sys.platform:
         logger.warning("pyuv module not found; using select()")
 
@@ -169,92 +168,104 @@ class Resolver(object):
 class PairedStream(iostream.IOStream):
     pair = None
 
-    def write(self, data, callback=None):
-        try:
-            super(PairedStream, self).write(data, callback=callback)
-        except iostream.StreamClosedError:
-            self.close_pair()
-
     def _read_to_buffer(self):
         try:
             return super(PairedStream, self)._read_to_buffer()
         except socket.error as e:
             if e.args[0] == errno.ECONNABORTED:
-                # Treat ECONNABORTED as a connection close rather than
-                # an error to minimize log spam.
+                # Treat ECONNABORTED as a connection close rather than an error to minimize log spam.
                 return
             raise
 
     def close_pair(self):
-        remote = self.pair
-        if remote:
-            if not remote.closed():
-                remote.close()
-            self.pair = None
+        pair = self.pair
+        if pair:
+            if not pair.closed():
+                pair.close()
+
+    def write(self, data, callback=None):
+        # It seems that pyuv will delay socket close, and still pass data from declared-closed stream,
+        # so we must handle this in order to avoid StreamClosedError.
+        if self.closed() and self.pair:
+            self.pair.close()
+        else:
+            super(PairedStream, self).write(data, callback=callback)
+
+    def on_streaming_data(self, data):
+        self.write(data)
+
+    def on_read_until_close_end(self, data):
+        pass
 
 
 class ProxyHandler(PairedStream):
     def wait_for_request(self):
-        try:
-            self.read_until("\r\n\r\n", self.on_request_headers)
-        except iostream.StreamClosedError:
-            self.close_pair()
+        self.read_until("\r\n\r\n", self.on_request_headers)
 
     def on_request_headers(self, data):
-        def on_remote_connected():
-            http_method = http_line.split(" ", 1)[0].upper()
-            headers = httputil.HTTPHeaders.parse(headers_str)
-
-            sogou = Sogou.instance()
-            timestamp = sogou.timestamp()
-            self.pair.write(
-                "{http_line}\r\n"
-                "X-Sogou-Auth: {sogou_auth}\r\n"
-                "X-Sogou-Timestamp: {sogou_timestamp}\r\n"
-                "X-Sogou-Tag: {sogou_tag}\r\n"
-                "{headers}".format(
-                    http_line=http_line,
-                    sogou_auth=sogou.auth_str,
-                    sogou_timestamp=timestamp,
-                    sogou_tag=sogou.tag(timestamp, headers.get("Host", "")),
-                    headers=headers_str,
-                )
-            )
-
-            if http_method != "CONNECT":
-                content_length = int(headers.get("Content-Length", 0))
-                if content_length:
-                    self.read_bytes(content_length,
-                                    callback=lambda data: self.pair.write(data) or self.wait_for_request(),
-                                    streaming_callback=self.pair.write)
-                else:
-                    self.wait_for_request()
-            else:
-                self.read_until_close(callback=self.pair.write, streaming_callback=self.pair.write)
-
-            if not self.pair.reading():
-                self.pair.read_until_close(callback=self.write, streaming_callback=self.write)
-
-        http_line, headers_str = data.split("\r\n", 1)
-        logger.debug(http_line)
+        self.http_line, self.headers_str = data.split("\r\n", 1)
+        logger.debug(self.http_line)
 
         if not self.pair:
-            self.pair = PairedStream(socket.socket())
-            self.pair.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
-
-            self.set_close_callback(self.pair.close_pair)
-            self.pair.set_close_callback(self.close_pair)
-
-            try:
-                self.pair.connect((Resolver.instance().query(Config.instance().sogou_host), 80), on_remote_connected)
-            except socket.gaierror as e:
-                if e.args[0] == 11001:  # getaddrinfo failed
-                    logger.warning("getaddrinfo failed.")
-                    self.write(GET_ADDRINFO_FAILED_MSG, callback=self.close)
-                else:
-                    raise
+            self.pair = self.pair_connect(self.on_remote_connected)
         else:
-            on_remote_connected()
+            self.on_remote_connected()
+
+    def pair_connect(self, callback=None):
+        pair = PairedStream(socket.socket())
+        pair.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
+
+        self.set_close_callback(pair.close_pair)
+        pair.set_close_callback(self.close_pair)
+
+        try:
+            pair.connect((Resolver.instance().query(Config.instance().sogou_host), 80), callback)
+        except socket.gaierror as e:
+            if e.args[0] == 11001:  # getaddrinfo failed
+                logger.warning("getaddrinfo failed.")
+                self.write(GET_ADDRINFO_FAILED_MSG, callback=self.close)
+            else:
+                raise
+        else:
+            return pair
+
+    def on_remote_connected(self):
+        http_method = self.http_line.split(" ", 1)[0].upper()
+        headers = httputil.HTTPHeaders.parse(self.headers_str)
+
+        sogou = Sogou.instance()
+        timestamp = sogou.timestamp()
+        self.pair.write(
+            "{http_line}\r\n"
+            "X-Sogou-Auth: {sogou_auth}\r\n"
+            "X-Sogou-Timestamp: {sogou_timestamp}\r\n"
+            "X-Sogou-Tag: {sogou_tag}\r\n"
+            "{headers}".format(
+                http_line=self.http_line,
+                sogou_auth=sogou.auth_str,
+                sogou_timestamp=timestamp,
+                sogou_tag=sogou.tag(timestamp, headers.get("Host", "")),
+                headers=self.headers_str,
+            )
+        )
+
+        if http_method != "CONNECT":
+            content_length = int(headers.get("Content-Length", 0))
+            if content_length:
+                self.read_bytes(content_length, callback=self.on_read_bytes_end,
+                                streaming_callback=self.pair.on_streaming_data)
+            else:
+                self.wait_for_request()
+        else:
+            self.read_until_close(callback=self.on_read_until_close_end,
+                                  streaming_callback=self.pair.on_streaming_data)
+
+        if not self.pair.reading():
+            self.pair.read_until_close(callback=self.pair.on_read_until_close_end,
+                                       streaming_callback=self.on_streaming_data)
+
+    def on_read_bytes_end(self, data):
+        self.wait_for_request()
 
 
 class ProxyServer(tcpserver.TCPServer):
