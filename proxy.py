@@ -167,13 +167,13 @@ class Resolver(object):
 
 
 class PairedStream(iostream.IOStream):
-    remote = None
+    pair = None
 
     def write(self, data, callback=None):
         try:
             super(PairedStream, self).write(data, callback=callback)
         except iostream.StreamClosedError:
-            pass
+            self.close_pair()
 
     def _read_to_buffer(self):
         try:
@@ -185,13 +185,12 @@ class PairedStream(iostream.IOStream):
                 return
             raise
 
-    def on_close(self):
-        remote = self.remote
-        if remote and not remote.closed():
-            if remote.writing():
-                remote.write("", callback=remote.close)
-            else:
+    def close_pair(self):
+        remote = self.pair
+        if remote:
+            if not remote.closed():
                 remote.close()
+            self.pair = None
 
 
 class ProxyHandler(PairedStream):
@@ -199,7 +198,7 @@ class ProxyHandler(PairedStream):
         try:
             self.read_until("\r\n\r\n", self.on_request_headers)
         except iostream.StreamClosedError:
-            self.on_close()
+            self.close_pair()
 
     def on_request_headers(self, data):
         def on_remote_connected():
@@ -208,7 +207,7 @@ class ProxyHandler(PairedStream):
 
             sogou = Sogou.instance()
             timestamp = sogou.timestamp()
-            self.remote.write(
+            self.pair.write(
                 "{http_line}\r\n"
                 "X-Sogou-Auth: {sogou_auth}\r\n"
                 "X-Sogou-Timestamp: {sogou_timestamp}\r\n"
@@ -226,28 +225,28 @@ class ProxyHandler(PairedStream):
                 content_length = int(headers.get("Content-Length", 0))
                 if content_length:
                     self.read_bytes(content_length,
-                                    callback=lambda data: self.remote.write(data) or self.wait_for_request(),
-                                    streaming_callback=self.remote.write)
+                                    callback=lambda data: self.pair.write(data) or self.wait_for_request(),
+                                    streaming_callback=self.pair.write)
                 else:
                     self.wait_for_request()
             else:
-                self.read_until_close(callback=self.remote.write, streaming_callback=self.remote.write)
+                self.read_until_close(callback=self.pair.write, streaming_callback=self.pair.write)
 
-            if not self.remote.reading():
-                self.remote.read_until_close(callback=self.write, streaming_callback=self.write)
+            if not self.pair.reading():
+                self.pair.read_until_close(callback=self.write, streaming_callback=self.write)
 
         http_line, headers_str = data.split("\r\n", 1)
         logger.debug(http_line)
 
-        if not self.remote:
-            self.remote = PairedStream(socket.socket())
-            self.remote.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
+        if not self.pair:
+            self.pair = PairedStream(socket.socket())
+            self.pair.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
 
-            self.set_close_callback(self.remote.on_close)
-            self.remote.set_close_callback(self.on_close)
+            self.set_close_callback(self.pair.close_pair)
+            self.pair.set_close_callback(self.close_pair)
 
             try:
-                self.remote.connect((Resolver.instance().query(Config.instance().sogou_host), 80), on_remote_connected)
+                self.pair.connect((Resolver.instance().query(Config.instance().sogou_host), 80), on_remote_connected)
             except socket.gaierror as e:
                 if e.args[0] == 11001:  # getaddrinfo failed
                     logger.warning("getaddrinfo failed.")
