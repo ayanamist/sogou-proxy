@@ -173,8 +173,7 @@ class PairedStream(iostream.IOStream):
         try:
             super(PairedStream, self).write(data, callback=callback)
         except iostream.StreamClosedError:
-            # Do not use self.close() for it may not run close callback.
-            self.on_close()
+            pass
 
     def _read_to_buffer(self):
         try:
@@ -183,8 +182,6 @@ class PairedStream(iostream.IOStream):
             if e.args[0] == errno.ECONNABORTED:
                 # Treat ECONNABORTED as a connection close rather than
                 # an error to minimize log spam.
-                if not self.closed():
-                    self.close(exc_info=True)
                 return
             raise
 
