@@ -186,8 +186,9 @@ class PairedStream(iostream.IOStream):
     def write(self, data, callback=None):
         # It seems that pyuv will delay socket close, and still pass data from declared-closed stream,
         # so we must handle this in order to avoid StreamClosedError.
-        if self.closed() and self.pair:
-            self.pair.close()
+        if self.closed():
+            if not self.pair.closed():
+                self.pair.close()
         else:
             super(PairedStream, self).write(data, callback=callback)
 
